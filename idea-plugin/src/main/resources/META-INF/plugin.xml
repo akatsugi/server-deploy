@@ -1,0 +1,39 @@
+<idea-plugin>
+    <id>com.akatsugi.serverdeploy.idea</id>
+    <name>Server Deploy</name>
+    <vendor>Akatsugi</vendor>
+
+    <description><![CDATA[
+    Plugin for server configuration, local-to-remote directory mapping, and right-click upload from the IDEA project tree.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService"/>
+        <applicationConfigurable
+                id="com.akatsugi.serverdeploy.idea.settings"
+                displayName="Server Deploy"
+                parentId="tools"
+                instance="com.akatsugi.serverdeploy.idea.settings.ServerDeployConfigurable"/>
+        <notificationGroup
+                id="Server Deploy"
+                displayType="BALLOON"
+                isLogByDefault="true"/>
+    </extensions>
+
+    <actions>
+        <action id="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
+                class="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
+                text="Configure Path Mapping"
+                description="Create or update a local-to-remote directory mapping for the selected path">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
+                class="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
+                text="Upload To Server"
+                description="Upload the selected file or directory to a configured server">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

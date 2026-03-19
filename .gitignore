@@ -3,3 +3,7 @@
 .m2
 /app-data
 /dist
+/.gradle
+/build
+/idea-plugin/.gradle/
+/idea-plugin/build/
