@@ -13,15 +13,26 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.DirectoryStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Properties;
 import java.util.Vector;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class RemoteOpsService {
 
     private static final int CONNECT_TIMEOUT = 10000;
+    private static final int MAX_UPLOAD_THREADS = 4;
 
     public interface LogSink {
         void log(String message);
@@ -29,35 +40,20 @@ public class RemoteOpsService {
 
     public void upload(ServerConfig config, Path localPath, String remoteDirectory, boolean deleteExisting, LogSink logSink)
             throws JSchException, SftpException, IOException {
-        Session session = openSession(config);
-        ChannelSftp sftp = null;
-        try {
-            sftp = (ChannelSftp) session.openChannel("sftp");
-            sftp.connect(CONNECT_TIMEOUT);
+        String normalizedRemoteDirectory = normalizeRemotePath(remoteDirectory);
+        String remoteTarget = joinRemotePath(normalizedRemoteDirectory, localPath.getFileName().toString());
+        uploadToExactPath(config, localPath, remoteTarget, deleteExisting, logSink);
+    }
 
-            String normalizedRemoteDirectory = normalizeRemotePath(remoteDirectory);
-            ensureDirectory(sftp, normalizedRemoteDirectory);
+    public void uploadToExactPath(ServerConfig config, Path localPath, String remoteTargetPath, boolean deleteExisting, LogSink logSink)
+            throws JSchException, SftpException, IOException {
+        UploadPlan plan = buildUploadPlan(localPath, remoteTargetPath);
+        logSink.log("Upload target: " + plan.getLocalRoot() + " -> " + plan.getRemoteTargetPath());
+        logSink.log("Upload summary: total files = " + plan.getTotalFiles() + ", threads = " + determineThreadCount(plan.getTotalFiles()));
 
-            String remoteTarget = joinRemotePath(normalizedRemoteDirectory, localPath.getFileName().toString());
-            if (deleteExisting && exists(sftp, remoteTarget)) {
-                logSink.log("删除远端同名项: " + remoteTarget);
-                deleteRecursively(sftp, remoteTarget);
-            }
-
-            if (Files.isDirectory(localPath)) {
-                logSink.log("上传目录: " + localPath + " -> " + remoteTarget);
-                uploadDirectory(sftp, localPath, remoteTarget, logSink);
-            } else {
-                logSink.log("上传文件: " + localPath + " -> " + remoteTarget);
-                ensureParentDirectory(sftp, remoteTarget);
-                sftp.put(localPath.toString(), remoteTarget);
-            }
-        } finally {
-            if (sftp != null) {
-                sftp.disconnect();
-            }
-            session.disconnect();
-        }
+        prepareRemoteTarget(config, plan, deleteExisting, logSink);
+        uploadFiles(config, plan, logSink);
+        logUploadCompleted(plan, logSink);
     }
 
     public CommandResult execute(ServerConfig config, String remoteDirectory, String command)
@@ -66,7 +62,12 @@ public class RemoteOpsService {
         ChannelExec exec = null;
         try {
             exec = (ChannelExec) session.openChannel("exec");
-            String fullCommand = "cd " + shellQuote(normalizeRemotePath(remoteDirectory)) + " && " + command;
+            String workingCommand = "cd " + shellQuote(normalizeRemotePath(remoteDirectory)) + " && " + command;
+            String fullCommand = "if command -v bash >/dev/null 2>&1; then bash -lc "
+                    + shellQuote(workingCommand)
+                    + "; else sh -lc "
+                    + shellQuote(workingCommand)
+                    + "; fi";
             exec.setCommand(fullCommand);
             exec.setInputStream(null);
 
@@ -82,7 +83,7 @@ public class RemoteOpsService {
                     exec.getExitStatus(),
                     outputBuffer.toString(StandardCharsets.UTF_8),
                     errorBuffer.toString(StandardCharsets.UTF_8),
-                    fullCommand
+                    workingCommand
             );
         } finally {
             if (exec != null) {
@@ -90,6 +91,151 @@ public class RemoteOpsService {
             }
             session.disconnect();
         }
+    }
+
+    private UploadPlan buildUploadPlan(Path localPath, String remoteTargetPath) throws IOException {
+        Path normalizedLocalPath = localPath.toAbsolutePath().normalize();
+        if (!Files.exists(normalizedLocalPath)) {
+            throw new IOException("Local path does not exist: " + normalizedLocalPath);
+        }
+
+        UploadPlan plan = new UploadPlan(normalizedLocalPath, normalizeRemotePath(remoteTargetPath), Files.isDirectory(normalizedLocalPath));
+        if (plan.isDirectory()) {
+            Files.walkFileTree(normalizedLocalPath, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    Path relativePath = normalizedLocalPath.relativize(dir);
+                    String remoteDirectory = relativePath.getNameCount() == 0
+                            ? plan.getRemoteTargetPath()
+                            : joinRemotePath(plan.getRemoteTargetPath(), toRemoteRelativePath(relativePath));
+                    plan.addDirectory(remoteDirectory);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!attrs.isRegularFile()) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Path relativePath = normalizedLocalPath.relativize(file);
+                    String remoteFile = joinRemotePath(plan.getRemoteTargetPath(), toRemoteRelativePath(relativePath));
+                    plan.addFile(new UploadFileEntry(file, remoteFile));
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            plan.sortDirectories();
+            return plan;
+        }
+
+        plan.addFile(new UploadFileEntry(normalizedLocalPath, plan.getRemoteTargetPath()));
+        return plan;
+    }
+
+    private void prepareRemoteTarget(ServerConfig config, UploadPlan plan, boolean deleteExisting, LogSink logSink)
+            throws JSchException, SftpException {
+        Session session = openSession(config);
+        ChannelSftp sftp = null;
+        try {
+            sftp = (ChannelSftp) session.openChannel("sftp");
+            sftp.connect(CONNECT_TIMEOUT);
+
+            if (deleteExisting && exists(sftp, plan.getRemoteTargetPath())) {
+                logSink.log("Delete remote target: " + plan.getRemoteTargetPath());
+                deleteRecursively(sftp, plan.getRemoteTargetPath());
+            }
+
+            if (plan.isDirectory()) {
+                for (String remoteDirectory : plan.getRemoteDirectories()) {
+                    ensureDirectory(sftp, remoteDirectory);
+                }
+            } else {
+                ensureParentDirectory(sftp, plan.getRemoteTargetPath());
+            }
+        } finally {
+            if (sftp != null) {
+                sftp.disconnect();
+            }
+            session.disconnect();
+        }
+    }
+
+    private void uploadFiles(ServerConfig config, UploadPlan plan, LogSink logSink)
+            throws JSchException, SftpException, IOException {
+        int totalFiles = plan.getTotalFiles();
+        if (totalFiles == 0) {
+            return;
+        }
+
+        int threadCount = determineThreadCount(totalFiles);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        AtomicInteger completedCount = new AtomicInteger();
+        List<Future<Void>> futures = new ArrayList<Future<Void>>();
+
+        try {
+            for (UploadFileEntry entry : plan.getFiles()) {
+                futures.add(executor.submit(() -> {
+                    uploadSingleFile(config, entry);
+                    int done = completedCount.incrementAndGet();
+                    logSink.log("[" + done + "/" + totalFiles + "] Uploaded: " + entry.getLocalFile() + " -> " + entry.getRemoteFile());
+                    return null;
+                }));
+            }
+
+            for (Future<Void> future : futures) {
+                future.get();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+            throw new IOException("Upload interrupted", e);
+        } catch (ExecutionException e) {
+            executor.shutdownNow();
+            rethrowUploadException(e.getCause());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private void uploadSingleFile(ServerConfig config, UploadFileEntry entry)
+            throws JSchException, SftpException {
+        Session session = openSession(config);
+        ChannelSftp sftp = null;
+        try {
+            sftp = (ChannelSftp) session.openChannel("sftp");
+            sftp.connect(CONNECT_TIMEOUT);
+            ensureParentDirectory(sftp, entry.getRemoteFile());
+            sftp.put(entry.getLocalFile().toString(), entry.getRemoteFile());
+        } finally {
+            if (sftp != null) {
+                sftp.disconnect();
+            }
+            session.disconnect();
+        }
+    }
+
+    private void logUploadCompleted(UploadPlan plan, LogSink logSink) {
+        logSink.log("========================================");
+        logSink.log("UPLOAD COMPLETED");
+        logSink.log("Remote target: " + plan.getRemoteTargetPath());
+        logSink.log("Files uploaded: " + plan.getTotalFiles() + "/" + plan.getTotalFiles());
+        logSink.log("========================================");
+    }
+
+    private void rethrowUploadException(Throwable throwable) throws JSchException, SftpException, IOException {
+        if (throwable instanceof JSchException) {
+            throw (JSchException) throwable;
+        }
+        if (throwable instanceof SftpException) {
+            throw (SftpException) throwable;
+        }
+        if (throwable instanceof IOException) {
+            throw (IOException) throwable;
+        }
+        throw new IOException("Upload failed", throwable);
+    }
+
+    private int determineThreadCount(int totalFiles) {
+        return Math.max(1, Math.min(MAX_UPLOAD_THREADS, totalFiles));
     }
 
     private Session openSession(ServerConfig config) throws JSchException {
@@ -101,23 +247,6 @@ public class RemoteOpsService {
         session.setConfig(properties);
         session.connect(CONNECT_TIMEOUT);
         return session;
-    }
-
-    private void uploadDirectory(ChannelSftp sftp, Path localDir, String remoteDir, LogSink logSink)
-            throws IOException, SftpException {
-        ensureDirectory(sftp, remoteDir);
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(localDir)) {
-            for (Path child : stream) {
-                String remoteChild = joinRemotePath(remoteDir, child.getFileName().toString());
-                if (Files.isDirectory(child)) {
-                    uploadDirectory(sftp, child, remoteChild, logSink);
-                } else {
-                    ensureParentDirectory(sftp, remoteChild);
-                    logSink.log("上传文件: " + child + " -> " + remoteChild);
-                    sftp.put(child.toString(), remoteChild);
-                }
-            }
-        }
     }
 
     private void ensureParentDirectory(ChannelSftp sftp, String remotePath) throws SftpException {
@@ -142,7 +271,13 @@ public class RemoteOpsService {
             }
             current = current + "/" + part;
             if (!exists(sftp, current)) {
-                sftp.mkdir(current);
+                try {
+                    sftp.mkdir(current);
+                } catch (SftpException e) {
+                    if (!exists(sftp, current)) {
+                        throw e;
+                    }
+                }
             }
         }
     }
@@ -190,7 +325,7 @@ public class RemoteOpsService {
                 Thread.sleep(100L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IOException("命令执行被中断", e);
+                throw new IOException("Command execution interrupted", e);
             }
         }
     }
@@ -208,6 +343,14 @@ public class RemoteOpsService {
             }
             buffer.write(data, 0, len);
         }
+    }
+
+    private String toRemoteRelativePath(Path relativePath) {
+        String normalized = relativePath.toString().replace('\\', '/');
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        return normalized;
     }
 
     private String normalizeRemotePath(String path) {
@@ -229,11 +372,93 @@ public class RemoteOpsService {
     }
 
     private String joinRemotePath(String base, String child) {
-        return normalizeRemotePath(base) + "/" + child;
+        return normalizeRemotePath(base) + "/" + child.replace('\\', '/');
     }
 
     private String shellQuote(String value) {
         return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    private static class UploadPlan {
+        private final Path localRoot;
+        private final String remoteTargetPath;
+        private final boolean directory;
+        private final List<String> remoteDirectories = new ArrayList<String>();
+        private final List<UploadFileEntry> files = new ArrayList<UploadFileEntry>();
+
+        private UploadPlan(Path localRoot, String remoteTargetPath, boolean directory) {
+            this.localRoot = localRoot;
+            this.remoteTargetPath = remoteTargetPath;
+            this.directory = directory;
+        }
+
+        private Path getLocalRoot() {
+            return localRoot;
+        }
+
+        private String getRemoteTargetPath() {
+            return remoteTargetPath;
+        }
+
+        private boolean isDirectory() {
+            return directory;
+        }
+
+        private List<String> getRemoteDirectories() {
+            return remoteDirectories;
+        }
+
+        private List<UploadFileEntry> getFiles() {
+            return files;
+        }
+
+        private int getTotalFiles() {
+            return files.size();
+        }
+
+        private void addDirectory(String remoteDirectory) {
+            remoteDirectories.add(remoteDirectory);
+        }
+
+        private void addFile(UploadFileEntry fileEntry) {
+            files.add(fileEntry);
+        }
+
+        private void sortDirectories() {
+            remoteDirectories.sort(Comparator.comparingInt(RemoteOpsService::countPathDepth));
+        }
+    }
+
+    private static class UploadFileEntry {
+        private final Path localFile;
+        private final String remoteFile;
+
+        private UploadFileEntry(Path localFile, String remoteFile) {
+            this.localFile = localFile;
+            this.remoteFile = remoteFile;
+        }
+
+        private Path getLocalFile() {
+            return localFile;
+        }
+
+        private String getRemoteFile() {
+            return remoteFile;
+        }
+    }
+
+    private static int countPathDepth(String remotePath) {
+        String normalized = remotePath == null ? "" : remotePath.trim();
+        if (normalized.isEmpty() || "/".equals(normalized)) {
+            return 0;
+        }
+        int depth = 0;
+        for (int i = 0; i < normalized.length(); i++) {
+            if (normalized.charAt(i) == '/') {
+                depth++;
+            }
+        }
+        return depth;
     }
 
     public static class CommandResult {
@@ -266,3 +491,4 @@ public class RemoteOpsService {
         }
     }
 }
+

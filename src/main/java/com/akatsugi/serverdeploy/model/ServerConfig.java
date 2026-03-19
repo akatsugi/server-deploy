@@ -9,6 +9,7 @@ public class ServerConfig {
     private String username;
     private String password;
     private String defaultDirectory;
+    private String baseMappingDirectory;
     private boolean lastUsed;
 
     public ServerConfig() {
@@ -16,7 +17,7 @@ public class ServerConfig {
     }
 
     public ServerConfig(Long id, String name, String host, int port, String username, String password,
-            String defaultDirectory, boolean lastUsed) {
+            String defaultDirectory, String baseMappingDirectory, boolean lastUsed) {
         this.id = id;
         this.name = name;
         this.host = host;
@@ -24,6 +25,7 @@ public class ServerConfig {
         this.username = username;
         this.password = password;
         this.defaultDirectory = defaultDirectory;
+        this.baseMappingDirectory = baseMappingDirectory;
         this.lastUsed = lastUsed;
     }
 
@@ -81,6 +83,14 @@ public class ServerConfig {
 
     public void setDefaultDirectory(String defaultDirectory) {
         this.defaultDirectory = defaultDirectory;
+    }
+
+    public String getBaseMappingDirectory() {
+        return baseMappingDirectory;
+    }
+
+    public void setBaseMappingDirectory(String baseMappingDirectory) {
+        this.baseMappingDirectory = baseMappingDirectory;
     }
 
     public boolean isLastUsed() {
