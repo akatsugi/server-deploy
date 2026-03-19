@@ -30,11 +30,14 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
@@ -59,8 +62,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -227,17 +232,9 @@ public class Launcher extends Application {
     private TextField baseMappingDirectoryField;
     private TextArea commandArea;
     private TextArea outputArea;
-    private Label previewPathLabel;
-    private Label previewTypeLabel;
-    private WebView previewWebView;
-    private SplitPane workspacePaneSplit;
-    private VBox previewPane;
-    private boolean previewHidden = true;
-    private String currentPreviewPathText = TEXT_PREVIEW_EMPTY;
-    private String currentPreviewTypeText = TEXT_PREVIEW_HINT;
-    private String currentPreviewText = "";
-    private String currentPreviewRenderType = "plain";
-    private double previewFontSize = 12.0;
+    private TabPane outputTabPane;
+    private Tab logTab;
+    private final Map<Path, PreviewTabState> previewTabs = new LinkedHashMap<Path, PreviewTabState>();
 
     private boolean reloadingWorkspaces;
     private boolean reloadingServers;
@@ -274,11 +271,6 @@ public class Launcher extends Application {
         workspaceTree = new TreeView<Path>();
         workspaceTree.setShowRoot(true);
         workspaceTree.setCellFactory(tree -> new WorkspaceTreeCell());
-        workspaceTree.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
-            if (newValue == null || newValue.getValue() == null || Files.isDirectory(newValue.getValue())) {
-                resetPreview();
-            }
-        });
 
         remoteDirectoryField = new TextField();
         baseMappingDirectoryField = new TextField();
@@ -293,13 +285,11 @@ public class Launcher extends Application {
         outputArea.setWrapText(true);
 
 
-        previewPathLabel = new Label(TEXT_PREVIEW_EMPTY);
-        previewPathLabel.setWrapText(true);
-        previewTypeLabel = new Label(TEXT_PREVIEW_HINT);
-        previewTypeLabel.setWrapText(true);
-        previewWebView = new WebView();
-        previewWebView.setContextMenuEnabled(false);
-        resetPreview();
+        logTab = new Tab(null, buildLogPanel());
+        logTab.setGraphic(createTabTitleLabel(TEXT_EXEC_LOG));
+        logTab.setClosable(false);
+        outputTabPane = buildOutputTabPane();
+
 
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(12));
@@ -345,7 +335,7 @@ public class Launcher extends Application {
 
     private SplitPane buildMainContent() {
         VBox topRightPane = new VBox(12, buildRuntimePanel(), buildCommandPanel());
-        SplitPane rightPane = new SplitPane(topRightPane, buildLogPanel());
+        SplitPane rightPane = new SplitPane(topRightPane, outputTabPane);
         rightPane.setOrientation(Orientation.VERTICAL);
         rightPane.setDividerPositions(0.42);
 
@@ -354,29 +344,42 @@ public class Launcher extends Application {
         return splitPane;
     }
 
-    private SplitPane buildWorkspacePane() {
+    private VBox buildWorkspacePane() {
         VBox treePane = new VBox(8, new Label(TEXT_WORKSPACE_TREE), workspaceTree);
         VBox.setVgrow(workspaceTree, Priority.ALWAYS);
-
-        previewPane = buildPreviewPane();
-        workspacePaneSplit = new SplitPane(treePane);
-        workspacePaneSplit.setOrientation(Orientation.VERTICAL);
-        workspacePaneSplit.setPrefWidth(390);
-        updatePreviewPaneVisibility();
-        return workspacePaneSplit;
+        treePane.setPrefWidth(390);
+        return treePane;
     }
 
-    private VBox buildPreviewPane() {
+    private TabPane buildOutputTabPane() {
+        TabPane tabPane = new TabPane();
+        tabPane.getTabs().add(logTab);
+        return tabPane;
+    }
+
+    private Label createTabTitleLabel(String text) {
+        Label label = new Label(text);
+        label.setStyle("-fx-font-family: 'Microsoft YaHei'; -fx-font-style: normal; -fx-font-weight: normal; -fx-font-size: 13px;");
+        return label;
+    }
+
+    private Label createSectionTitleLabel(String text) {
+        Label label = new Label(text);
+        label.setStyle("-fx-font-family: 'Microsoft YaHei'; -fx-font-style: normal; -fx-font-weight: normal; -fx-font-size: 13px;");
+        return label;
+    }
+
+    private VBox buildPreviewPane(PreviewTabState state) {
         Button zoomOutButton = new Button(TEXT_PREVIEW_ZOOM_OUT);
-        zoomOutButton.setOnAction(event -> changePreviewFontSize(-1.0));
+        zoomOutButton.setOnAction(event -> changePreviewFontSize(state, -1.0));
         Button zoomInButton = new Button(TEXT_PREVIEW_ZOOM_IN);
-        zoomInButton.setOnAction(event -> changePreviewFontSize(1.0));
+        zoomInButton.setOnAction(event -> changePreviewFontSize(state, 1.0));
         Button hideButton = new Button(TEXT_HIDE_PREVIEW);
-        hideButton.setOnAction(event -> hidePreviewPane());
+        hideButton.setOnAction(event -> closePreviewTab(state.path));
         HBox header = new HBox(8, new Label(TEXT_PREVIEW_PANEL), zoomOutButton, zoomInButton, hideButton);
         header.setAlignment(Pos.CENTER_LEFT);
-        VBox box = new VBox(6, header, previewPathLabel, previewTypeLabel, previewWebView);
-        VBox.setVgrow(previewWebView, Priority.ALWAYS);
+        VBox box = new VBox(6, header, state.pathLabel, state.typeLabel, state.webView);
+        VBox.setVgrow(state.webView, Priority.ALWAYS);
         return box;
     }
 
@@ -404,7 +407,9 @@ public class Launcher extends Application {
     private VBox buildLogPanel() {
         Button clearLogButton = new Button(TEXT_CLEAR_LOG);
         clearLogButton.setOnAction(event -> outputArea.clear());
-        VBox box = new VBox(8, new HBox(8, new Label(TEXT_EXEC_LOG), clearLogButton), outputArea);
+        HBox header = new HBox(8, createSectionTitleLabel(TEXT_EXEC_LOG), clearLogButton);
+        header.setAlignment(Pos.CENTER_LEFT);
+        VBox box = new VBox(8, header, outputArea);
         VBox.setVgrow(outputArea, Priority.ALWAYS);
         return box;
     }
@@ -431,7 +436,8 @@ public class Launcher extends Application {
     }
 
     private void loadWorkspaceTree(Path workspacePath) {
-        resetPreview();
+        closeAllPreviewTabs();
+
         if (workspacePath == null || !Files.isDirectory(workspacePath)) {
             workspaceTree.setRoot(null);
             return;
@@ -1105,89 +1111,92 @@ public class Launcher extends Application {
         }
         Path normalizedPath = path.toAbsolutePath().normalize();
         try {
+            PreviewTabState state = getOrCreatePreviewTab(normalizedPath);
             if (!Files.exists(normalizedPath)) {
-                showPreviewMessage(TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + TEXT_PREVIEW_PLAIN, TEXT_PREVIEW_EMPTY, "plain");
+                showPreviewMessage(state, TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + TEXT_PREVIEW_PLAIN, TEXT_PREVIEW_EMPTY, "plain");
                 return;
             }
             if (isPreviewBlocked(normalizedPath)) {
-                showPreviewMessage(TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + TEXT_PREVIEW_PLAIN, TEXT_PREVIEW_UNSUPPORTED, "plain");
+                showPreviewMessage(state, TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + TEXT_PREVIEW_PLAIN, TEXT_PREVIEW_UNSUPPORTED, "plain");
                 return;
             }
             String previewType = resolvePreviewType(normalizedPath);
             String previewTypeLabel = resolvePreviewTypeLabel(previewType);
             if (Files.size(normalizedPath) > MAX_PREVIEW_FILE_SIZE) {
-                showPreviewMessage(TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + previewTypeLabel, TEXT_PREVIEW_TOO_LARGE, "plain");
+                showPreviewMessage(state, TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + previewTypeLabel, TEXT_PREVIEW_TOO_LARGE, "plain");
                 return;
             }
             String text = decodePreviewText(Files.readAllBytes(normalizedPath));
-            showPreviewMessage(TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + previewTypeLabel, text, previewType);
+            showPreviewMessage(state, TEXT_PREVIEW_PATH + normalizedPath, TEXT_PREVIEW_TYPE + previewTypeLabel, text, previewType);
             log(TEXT_PREVIEWED_FILE + normalizedPath);
         } catch (Exception e) {
             showError(TEXT_PREVIEW_FAILED, unwrapMessage(e));
         }
     }
 
-    private void resetPreview() {
-        currentPreviewPathText = TEXT_PREVIEW_EMPTY;
-        currentPreviewTypeText = TEXT_PREVIEW_HINT;
-        currentPreviewText = "";
-        currentPreviewRenderType = "plain";
-        if (previewPathLabel != null) {
-            previewPathLabel.setText(currentPreviewPathText);
+    private PreviewTabState getOrCreatePreviewTab(Path normalizedPath) {
+        PreviewTabState state = previewTabs.get(normalizedPath);
+        if (state != null) {
+            outputTabPane.getSelectionModel().select(state.tab);
+            return state;
         }
-        if (previewTypeLabel != null) {
-            previewTypeLabel.setText(currentPreviewTypeText);
-        }
-        renderPreviewContent();
-        hidePreviewPane();
+        state = new PreviewTabState(normalizedPath);
+        VBox pane = buildPreviewPane(state);
+        Tab tab = new Tab(null, pane);
+        tab.setGraphic(createTabTitleLabel(resolvePreviewTabTitle(normalizedPath)));
+        tab.setClosable(true);
+        tab.setTooltip(new Tooltip(normalizedPath.toString()));
+        PreviewTabState finalState = state;
+        tab.setOnClosed(event -> previewTabs.remove(finalState.path));
+        state.tab = tab;
+        previewTabs.put(normalizedPath, state);
+        outputTabPane.getTabs().add(tab);
+        outputTabPane.getSelectionModel().select(tab);
+        return state;
     }
 
-    private void changePreviewFontSize(double delta) {
-        previewFontSize = Math.max(10.0, Math.min(22.0, previewFontSize + delta));
-        renderPreviewContent();
-    }
-
-    private void showPreviewMessage(String pathText, String typeText, String text, String previewType) {
-        currentPreviewPathText = pathText;
-        currentPreviewTypeText = typeText;
-        currentPreviewText = text == null ? "" : text;
-        currentPreviewRenderType = isBlank(previewType) ? "plain" : previewType;
-        previewPathLabel.setText(currentPreviewPathText);
-        previewTypeLabel.setText(currentPreviewTypeText);
-        showPreviewPane();
-        renderPreviewContent();
-    }
-
-    private void renderPreviewContent() {
-        if (previewWebView != null) {
-            previewWebView.getEngine().loadContent(buildPreviewHtml(currentPreviewText, currentPreviewRenderType));
-        }
-    }
-
-    private void showPreviewPane() {
-        previewHidden = false;
-        updatePreviewPaneVisibility();
-    }
-
-    private void hidePreviewPane() {
-        previewHidden = true;
-        updatePreviewPaneVisibility();
-    }
-
-    private void updatePreviewPaneVisibility() {
-        if (workspacePaneSplit == null || previewPane == null) {
+    private void closePreviewTab(Path normalizedPath) {
+        PreviewTabState state = previewTabs.remove(normalizedPath);
+        if (state == null) {
             return;
         }
-        if (previewHidden) {
-            workspacePaneSplit.getItems().remove(previewPane);
-            return;
-        }
-        if (!workspacePaneSplit.getItems().contains(previewPane)) {
-            workspacePaneSplit.getItems().add(previewPane);
-        }
-        workspacePaneSplit.setDividerPositions(0.56);
+        outputTabPane.getTabs().remove(state.tab);
+        outputTabPane.getSelectionModel().select(logTab);
     }
-    private String buildPreviewHtml(String text, String previewType) {
+
+    private void closeAllPreviewTabs() {
+        List<Path> paths = new ArrayList<Path>(previewTabs.keySet());
+        for (Path path : paths) {
+            closePreviewTab(path);
+        }
+    }
+
+    private String resolvePreviewTabTitle(Path normalizedPath) {
+        Path fileName = normalizedPath.getFileName();
+        return fileName == null ? normalizedPath.toString() : fileName.toString();
+    }
+
+    private void changePreviewFontSize(PreviewTabState state, double delta) {
+        state.fontSize = Math.max(10.0, Math.min(22.0, state.fontSize + delta));
+        renderPreviewContent(state);
+    }
+
+    private void showPreviewMessage(PreviewTabState state, String pathText, String typeText, String text, String previewType) {
+        state.pathText = pathText;
+        state.typeText = typeText;
+        state.text = text == null ? "" : text;
+        state.renderType = isBlank(previewType) ? "plain" : previewType;
+        state.pathLabel.setText(state.pathText);
+        state.typeLabel.setText(state.typeText);
+        renderPreviewContent(state);
+        outputTabPane.getSelectionModel().select(state.tab);
+    }
+
+    private void renderPreviewContent(PreviewTabState state) {
+        state.webView.getEngine().loadContent(buildPreviewHtml(state.text, state.renderType, state.fontSize));
+    }
+
+    private String buildPreviewHtml(String text, String previewType, double previewFontSize) {
         String bodyHtml = renderPreviewBody(text, previewType);
         int lineHeight = (int) Math.round(Math.max(18.0, previewFontSize + 8.0));
         int minHeight = (int) Math.round(Math.max(20.0, previewFontSize + 10.0));
@@ -1781,6 +1790,27 @@ public class Launcher extends Application {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private class PreviewTabState {
+
+        private final Path path;
+        private final Label pathLabel = new Label(TEXT_PREVIEW_EMPTY);
+        private final Label typeLabel = new Label(TEXT_PREVIEW_HINT);
+        private final WebView webView = new WebView();
+        private Tab tab;
+        private String pathText = TEXT_PREVIEW_EMPTY;
+        private String typeText = TEXT_PREVIEW_HINT;
+        private String text = "";
+        private String renderType = "plain";
+        private double fontSize = 12.0;
+
+        private PreviewTabState(Path path) {
+            this.path = path;
+            this.pathLabel.setWrapText(true);
+            this.typeLabel.setWrapText(true);
+            this.webView.setContextMenuEnabled(false);
+        }
     }
 
     private class WorkspaceTreeCell extends TreeCell<Path> {
