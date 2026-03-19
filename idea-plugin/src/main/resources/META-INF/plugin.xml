@@ -1,10 +1,10 @@
 <idea-plugin>
     <id>com.akatsugi.serverdeploy.idea</id>
-    <name>Server Deploy</name>
+    <name>服务器部署</name>
     <vendor>Akatsugi</vendor>
 
     <description><![CDATA[
-    Plugin for server configuration, local-to-remote directory mapping, and right-click upload from the IDEA project tree.
+    用于配置服务器、目录映射，并支持在 IDEA 项目树中右键上传文件或目录到服务器。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -13,7 +13,7 @@
         <applicationService serviceImplementation="com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService"/>
         <applicationConfigurable
                 id="com.akatsugi.serverdeploy.idea.settings"
-                displayName="Server Deploy"
+                displayName="服务器部署"
                 parentId="tools"
                 instance="com.akatsugi.serverdeploy.idea.settings.ServerDeployConfigurable"/>
         <notificationGroup
@@ -25,14 +25,14 @@
     <actions>
         <action id="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
                 class="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
-                text="Configure Path Mapping"
-                description="Create or update a local-to-remote directory mapping for the selected path">
+                text="配置路径映射"
+                description="为选中的文件或目录创建或更新本地与远程目录映射">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
         <action id="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
                 class="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
-                text="Upload To Server"
-                description="Upload the selected file or directory to a configured server">
+                text="上传到服务器"
+                description="将选中的文件或目录上传到已配置的服务器">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
     </actions>

@@ -107,20 +107,20 @@ public class ServerDeploySettingsPanel {
         for (ServerConfig server : serverValues) {
             if (isBlank(server.getName()) || isBlank(server.getHost()) || isBlank(server.getUsername())
                     || isBlank(server.getPassword()) || isBlank(server.getDefaultDirectory())) {
-                throw new ConfigurationException("All server fields are required.");
+                throw new ConfigurationException("\u670d\u52a1\u5668\u914d\u7f6e\u9879\u4e0d\u80fd\u4e3a\u7a7a\u3002");
             }
         }
         for (DirectoryMapping mapping : mappingValues) {
             if (isBlank(mapping.getServerId()) || isBlank(mapping.getLocalDirectory()) || isBlank(mapping.getRemoteDirectory())) {
-                throw new ConfigurationException("All mapping fields are required.");
+                throw new ConfigurationException("\u6620\u5c04\u914d\u7f6e\u9879\u4e0d\u80fd\u4e3a\u7a7a\u3002");
             }
         }
     }
 
     private JPanel createToolbar() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton importButton = new JButton("Import JSON");
-        JButton exportButton = new JButton("Export JSON");
+        JButton importButton = new JButton("\u5bfc\u5165 JSON");
+        JButton exportButton = new JButton("\u5bfc\u51fa JSON");
         importButton.addActionListener(event -> importFromJson());
         exportButton.addActionListener(event -> exportToJson());
         panel.add(importButton);
@@ -130,7 +130,7 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createServerPanel(JScrollPane scrollPane) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Servers"));
+        panel.setBorder(new TitledBorder("\u670d\u52a1\u5668\u5217\u8868"));
         panel.add(scrollPane, BorderLayout.CENTER);
         panel.add(createServerButtons(), BorderLayout.SOUTH);
         return panel;
@@ -138,7 +138,7 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createMappingPanel(JScrollPane scrollPane) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Directory Mappings"));
+        panel.setBorder(new TitledBorder("\u76ee\u5f55\u6620\u5c04"));
         panel.add(scrollPane, BorderLayout.CENTER);
         panel.add(createMappingButtons(), BorderLayout.SOUTH);
         return panel;
@@ -146,9 +146,9 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createServerButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton addButton = new JButton("Add");
-        JButton editButton = new JButton("Edit");
-        JButton removeButton = new JButton("Remove");
+        JButton addButton = new JButton("\u65b0\u589e");
+        JButton editButton = new JButton("\u7f16\u8f91");
+        JButton removeButton = new JButton("\u5220\u9664");
         addButton.addActionListener(event -> addServer());
         editButton.addActionListener(event -> editServer());
         removeButton.addActionListener(event -> removeServer());
@@ -160,9 +160,9 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createMappingButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton addButton = new JButton("Add");
-        JButton editButton = new JButton("Edit");
-        JButton removeButton = new JButton("Remove");
+        JButton addButton = new JButton("\u65b0\u589e");
+        JButton editButton = new JButton("\u7f16\u8f91");
+        JButton removeButton = new JButton("\u5220\u9664");
         addButton.addActionListener(event -> addMapping());
         editButton.addActionListener(event -> editMapping());
         removeButton.addActionListener(event -> removeMapping());
@@ -257,7 +257,7 @@ public class ServerDeploySettingsPanel {
 
     private void addMapping() {
         if (servers.isEmpty()) {
-            Messages.showInfoMessage(rootPanel, "Add a server before creating a mapping.", "Server Deploy");
+            Messages.showInfoMessage(rootPanel, "\u8bf7\u5148\u65b0\u589e\u670d\u52a1\u5668\uff0c\u518d\u521b\u5efa\u76ee\u5f55\u6620\u5c04\u3002", "\u670d\u52a1\u5668\u90e8\u7f72");
             return;
         }
         String projectDirectory = determineDefaultProjectDirectory();
@@ -319,7 +319,7 @@ public class ServerDeploySettingsPanel {
 
     private void exportToJson() {
         JFileChooser chooser = createJsonChooser();
-        chooser.setDialogTitle("Export Server Deploy Configuration");
+        chooser.setDialogTitle("\u5bfc\u51fa\u670d\u52a1\u5668\u90e8\u7f72\u914d\u7f6e");
         chooser.setSelectedFile(new java.io.File("server-deploy-config.json"));
         if (chooser.showSaveDialog(rootPanel) != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return;
@@ -332,15 +332,15 @@ public class ServerDeploySettingsPanel {
         try {
             Path file = ensureJsonExtension(chooser.getSelectedFile().toPath());
             Files.writeString(file, settingsJsonService.toJson(state), StandardCharsets.UTF_8);
-            Messages.showInfoMessage(rootPanel, "Configuration exported to:\n" + file, "Server Deploy");
+            Messages.showInfoMessage(rootPanel, "\u914d\u7f6e\u5df2\u5bfc\u51fa\u5230\uff1a\n" + file, "\u670d\u52a1\u5668\u90e8\u7f72");
         } catch (IOException exception) {
-            Messages.showErrorDialog(rootPanel, exception.getMessage(), "Export Failed");
+            Messages.showErrorDialog(rootPanel, exception.getMessage(), "\u5bfc\u51fa\u5931\u8d25");
         }
     }
 
     private void importFromJson() {
         JFileChooser chooser = createJsonChooser();
-        chooser.setDialogTitle("Import Server Deploy Configuration");
+        chooser.setDialogTitle("\u5bfc\u5165\u670d\u52a1\u5668\u90e8\u7f72\u914d\u7f6e");
         if (chooser.showOpenDialog(rootPanel) != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return;
         }
@@ -349,15 +349,15 @@ public class ServerDeploySettingsPanel {
             String json = Files.readString(chooser.getSelectedFile().toPath(), StandardCharsets.UTF_8);
             ServerDeploySettingsState imported = settingsService.sanitize(settingsJsonService.fromJson(json));
             setData(imported.getServers(), imported.getMappings());
-            Messages.showInfoMessage(rootPanel, "Configuration imported. Click Apply or OK to save.", "Server Deploy");
+            Messages.showInfoMessage(rootPanel, "\u914d\u7f6e\u5df2\u5bfc\u5165\uff0c\u8bf7\u70b9\u51fb\u201c\u5e94\u7528\u201d\u6216\u201c\u786e\u5b9a\u201d\u4fdd\u5b58\u3002", "\u670d\u52a1\u5668\u90e8\u7f72");
         } catch (Exception exception) {
-            Messages.showErrorDialog(rootPanel, exception.getMessage(), "Import Failed");
+            Messages.showErrorDialog(rootPanel, exception.getMessage(), "\u5bfc\u5165\u5931\u8d25");
         }
     }
 
     private JFileChooser createJsonChooser() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(new FileNameExtensionFilter("JSON Files", "json"));
+        chooser.setFileFilter(new FileNameExtensionFilter("JSON \u6587\u4ef6", "json"));
         String projectDirectory = determineDefaultProjectDirectory();
         if (!isBlank(projectDirectory)) {
             chooser.setCurrentDirectory(new java.io.File(projectDirectory));
@@ -412,7 +412,7 @@ public class ServerDeploySettingsPanel {
 
     private class ServerTableModel extends AbstractTableModel {
 
-        private final String[] columns = {"Name", "Host", "Port", "Username", "Default Remote Directory"};
+        private final String[] columns = {"\u540d\u79f0", "\u4e3b\u673a", "\u7aef\u53e3", "\u7528\u6237\u540d", "\u9ed8\u8ba4\u8fdc\u7a0b\u76ee\u5f55"};
 
         @Override
         public int getRowCount() {
@@ -445,7 +445,7 @@ public class ServerDeploySettingsPanel {
 
     private class MappingTableModel extends AbstractTableModel {
 
-        private final String[] columns = {"Server", "Local Directory", "Remote Directory"};
+        private final String[] columns = {"\u670d\u52a1\u5668", "\u672c\u5730\u76ee\u5f55", "\u8fdc\u7a0b\u76ee\u5f55"};
 
         @Override
         public int getRowCount() {

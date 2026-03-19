@@ -16,7 +16,7 @@ public class ServerDeployConfigurable implements Configurable {
 
     @Override
     public String getDisplayName() {
-        return "Server Deploy";
+        return "\u670d\u52a1\u5668\u90e8\u7f72";
     }
 
     @Override

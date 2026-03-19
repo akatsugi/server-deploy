@@ -74,7 +74,7 @@ public class RemoteUploadService {
     private UploadPlan buildUploadPlan(Path localPath, String remoteTargetPath) throws IOException {
         Path normalizedLocalPath = localPath.toAbsolutePath().normalize();
         if (!Files.exists(normalizedLocalPath)) {
-            throw new IOException("Local path does not exist: " + normalizedLocalPath);
+            throw new IOException("本地路径不存在：" + normalizedLocalPath);
         }
 
         String normalizedRemoteTarget = ServerDeploySettingsService.normalizeRemoteDirectory(remoteTargetPath);

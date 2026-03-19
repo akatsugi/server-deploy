@@ -59,7 +59,7 @@ public class UploadToServerAction extends AnAction implements DumbAware {
     }
 
     private void runUpload(Project project, Path selectedPath, ResolvedUploadTarget target, boolean deleteExisting) {
-        ProgressManager.getInstance().run(new Task.Backgroundable(project, "Upload To Server", true) {
+        ProgressManager.getInstance().run(new Task.Backgroundable(project, "上传到服务器", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(false);
@@ -73,22 +73,22 @@ public class UploadToServerAction extends AnAction implements DumbAware {
                                 @Override
                                 public void onStart(int totalFiles) {
                                     indicator.setFraction(0.0);
-                                    indicator.setText("Connecting to " + target.getServerConfig().getName());
-                                    indicator.setText2("Total files: " + totalFiles);
+                                    indicator.setText("正在连接 " + target.getServerConfig().getName());
+                                    indicator.setText2("文件总数：" + totalFiles);
                                 }
 
                                 @Override
                                 public void onProgress(String fileName, int completed, int totalFiles) {
-                                    indicator.setText("Uploading to " + target.getServerConfig().getName());
+                                    indicator.setText("正在上传到 " + target.getServerConfig().getName());
                                     indicator.setText2(fileName + " (" + completed + "/" + totalFiles + ")");
                                     indicator.setFraction(totalFiles == 0 ? 1.0 : (double) completed / (double) totalFiles);
                                 }
                             }
                     );
-                    showNotification(project, NotificationType.INFORMATION, "Upload Completed",
+                    showNotification(project, NotificationType.INFORMATION, "上传完成",
                             target.getServerConfig().getName() + " -> " + target.getRemoteTargetPath());
                 } catch (IOException | JSchException | SftpException exception) {
-                    showNotification(project, NotificationType.ERROR, "Upload Failed", exception.getMessage());
+                    showNotification(project, NotificationType.ERROR, "上传失败", exception.getMessage());
                 }
             }
         });
