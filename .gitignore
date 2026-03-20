@@ -7,3 +7,5 @@
 /build
 /idea-plugin/.gradle/
 /idea-plugin/build/
+/idea-plugin/.idea/
+/.gradle-user-home/
