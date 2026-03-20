@@ -24,7 +24,7 @@ import java.util.Objects;
 
 public class MappingEditDialog extends DialogWrapper {
 
-    private static final String REMOTE_DIRECTORY_HINT = "\u76f8\u5bf9\u8def\u5f84\u5982 '.' \u6216 'service-a' \u4f1a\u62fc\u63a5\u5230\u670d\u52a1\u5668\u9ed8\u8ba4\u8fdc\u7a0b\u76ee\u5f55\u540e\uff1b\u4ee5 '/' \u5f00\u5934\u7684\u503c\u4f1a\u88ab\u89c6\u4e3a\u7edd\u5bf9\u8def\u5f84\uff0c\u4e0d\u4f1a\u518d\u62fc\u63a5\u9ed8\u8ba4\u76ee\u5f55\u3002";
+    private static final String REMOTE_DIRECTORY_HINT = "相对路径如 '.' 或 'service-a' 会拼接到服务器默认远程目录后；以 '/' 开头的值会被视为绝对路径，不会再拼接默认目录。";
 
     private final JComboBox<ServerConfig> serverComboBox;
     private final JTextField localDirectoryField = new JTextField();
@@ -39,7 +39,7 @@ public class MappingEditDialog extends DialogWrapper {
         super(true);
         serverComboBox = new JComboBox<>(servers.toArray(new ServerConfig[0]));
         this.defaultBrowseDirectory = defaultBrowseDirectory;
-        setTitle(source == null ? "\u65b0\u589e\u6620\u5c04" : "\u7f16\u8f91\u6620\u5c04");
+        setTitle(source == null ? "新增映射" : "编辑映射");
         remoteDirectoryField.setToolTipText(REMOTE_DIRECTORY_HINT);
 
         if (source != null) {
@@ -79,14 +79,14 @@ public class MappingEditDialog extends DialogWrapper {
     @Override
     protected @Nullable ValidationInfo doValidate() {
         if (serverComboBox.getSelectedItem() == null) {
-            return new ValidationInfo("\u8bf7\u9009\u62e9\u76ee\u6807\u670d\u52a1\u5668\u3002", serverComboBox);
+            return new ValidationInfo("请选择目标服务器。", serverComboBox);
         }
         if (isBlank(localDirectoryField.getText()) || isBlank(remoteDirectoryField.getText())) {
-            return new ValidationInfo("\u6620\u5c04\u914d\u7f6e\u9879\u4e0d\u80fd\u4e3a\u7a7a\u3002");
+            return new ValidationInfo("映射配置项不能为空。");
         }
         File localDirectory = new File(localDirectoryField.getText().trim());
         if (!localDirectory.exists() || !localDirectory.isDirectory()) {
-            return new ValidationInfo("\u672c\u5730\u76ee\u5f55\u5fc5\u987b\u5b58\u5728\u4e14\u4e3a\u6587\u4ef6\u5939\u3002", localDirectoryField);
+            return new ValidationInfo("本地目录必须存在且为文件夹。", localDirectoryField);
         }
         return null;
     }
@@ -96,10 +96,10 @@ public class MappingEditDialog extends DialogWrapper {
         String remoteDirectory = remoteDirectoryField.getText() == null ? "" : remoteDirectoryField.getText().trim();
         if (ServerDeploySettingsService.isAbsoluteRemotePath(remoteDirectory)) {
             int result = Messages.showYesNoDialog(
-                    "\u8fdc\u7a0b\u76ee\u5f55\u4ee5 '/' \u5f00\u5934\uff0c\u5c06\u4ec5\u6309\u7edd\u5bf9\u8def\u5f84\u5904\u7406\uff0c\u4e0d\u4f1a\u4e0e\u670d\u52a1\u5668\u9ed8\u8ba4\u76ee\u5f55\u62fc\u63a5\u3002\u662f\u5426\u7ee7\u7eed\uff1f",
-                    "\u7edd\u5bf9\u8def\u5f84\u63d0\u793a",
-                    "\u4f7f\u7528\u7edd\u5bf9\u8def\u5f84",
-                    "\u53d6\u6d88",
+                    "远程目录以 '/' 开头，将仅按绝对路径处理，不会与服务器默认目录拼接。是否继续？",
+                    "绝对路径提示",
+                    "使用绝对路径",
+                    "取消",
                     Messages.getWarningIcon()
             );
             if (result != Messages.YES) {
@@ -113,7 +113,7 @@ public class MappingEditDialog extends DialogWrapper {
     protected @Nullable JComponent createCenterPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setPreferredSize(new java.awt.Dimension(720, 220));
-        addRow(panel, 0, "\u670d\u52a1\u5668", serverComboBox);
+        addRow(panel, 0, "服务器", serverComboBox);
 
         JPanel localPanel = new JPanel(new GridBagLayout());
         GridBagConstraints text = new GridBagConstraints();
@@ -123,7 +123,7 @@ public class MappingEditDialog extends DialogWrapper {
         text.fill = GridBagConstraints.HORIZONTAL;
         localPanel.add(localDirectoryField, text);
 
-        JButton browseButton = new JButton("\u6d4f\u89c8");
+        JButton browseButton = new JButton("浏览");
         browseButton.addActionListener(event -> chooseDirectory());
         GridBagConstraints button = new GridBagConstraints();
         button.gridx = 1;
@@ -131,8 +131,8 @@ public class MappingEditDialog extends DialogWrapper {
         button.insets = new Insets(0, 6, 0, 0);
         localPanel.add(browseButton, button);
 
-        addRow(panel, 1, "\u672c\u5730\u76ee\u5f55", localPanel);
-        addRow(panel, 2, "\u8fdc\u7a0b\u76ee\u5f55", remoteDirectoryField);
+        addRow(panel, 1, "本地目录", localPanel);
+        addRow(panel, 2, "远程目录", remoteDirectoryField);
 
         GridBagConstraints hint = new GridBagConstraints();
         hint.gridx = 1;
@@ -164,7 +164,7 @@ public class MappingEditDialog extends DialogWrapper {
     private void chooseDirectory() {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        chooser.setDialogTitle("\u9009\u62e9\u672c\u5730\u76ee\u5f55");
+        chooser.setDialogTitle("选择本地目录");
 
         if (!isBlank(localDirectoryField.getText())) {
             chooser.setCurrentDirectory(new File(localDirectoryField.getText().trim()));

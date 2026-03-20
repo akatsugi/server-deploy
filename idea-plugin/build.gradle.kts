@@ -54,8 +54,8 @@ intellijPlatform {
         id = pluginId
         name = pluginName
         version = pluginVersion
-        description = "用于配置服务器、目录映射，并支持在 IDEA 项目树中右键上传文件或目录到服务器。"
-        changeNotes = "界面文案已中文化，并支持目录映射配置、JSON 导入导出与右键上传。"
+        description = "Server deploy plugin for server configuration, directory mappings, uploads, and remote shell execution."
+        changeNotes = "Added remote shell command execution and default command settings."
         ideaVersion {
             sinceBuild = "241"
         }

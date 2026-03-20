@@ -23,6 +23,8 @@ import java.util.stream.Collectors;
 @State(name = "ServerDeploySettings", storages = @Storage("server-deploy-plugin.xml"))
 public final class ServerDeploySettingsService implements PersistentStateComponent<ServerDeploySettingsState> {
 
+    public static final String DEFAULT_SHELL_COMMAND = "ls -l ${remotePath}";
+
     private ServerDeploySettingsState state = new ServerDeploySettingsState();
 
     public static ServerDeploySettingsService getInstance() {
@@ -53,8 +55,17 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
                 .collect(Collectors.toList());
     }
 
+    public String getDefaultShellCommand() {
+        return normalizeShellCommand(state.getDefaultShellCommand());
+    }
+
     public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings) {
+        update(servers, mappings, state.getDefaultShellCommand());
+    }
+
+    public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings, String defaultShellCommand) {
         ServerDeploySettingsState newState = new ServerDeploySettingsState();
+        newState.setDefaultShellCommand(defaultShellCommand);
         newState.setServers(copyServers(servers));
         newState.setMappings(copyMappings(mappings));
         state = sanitize(newState);
@@ -90,6 +101,7 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
         }
 
         ServerDeploySettingsState normalized = new ServerDeploySettingsState();
+        normalized.setDefaultShellCommand(normalizeShellCommand(source.getDefaultShellCommand()));
         normalized.setServers(normalizedServers);
         normalized.setMappings(normalizedMappings);
         return normalized;
@@ -182,5 +194,10 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
             normalizedChild = normalizedChild.substring(1);
         }
         return normalizeRemoteDirectory(normalizedBase + "/" + normalizedChild);
+    }
+
+    public static String normalizeShellCommand(String value) {
+        String normalized = value == null ? "" : value.strip();
+        return normalized.isEmpty() ? DEFAULT_SHELL_COMMAND : normalized;
     }
 }

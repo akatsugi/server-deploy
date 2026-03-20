@@ -4,7 +4,7 @@
     <vendor>Akatsugi</vendor>
 
     <description><![CDATA[
-    用于配置服务器、目录映射，并支持在 IDEA 项目树中右键上传文件或目录到服务器。
+    用于配置服务器、目录映射，并支持在 IDEA 项目树中右键上传文件或目录到服务器，以及执行远程 Shell 命令。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -23,17 +23,24 @@
     </extensions>
 
     <actions>
-        <action id="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
-                class="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
-                text="配置路径映射"
-                description="为选中的文件或目录创建或更新本地与远程目录映射">
+        <group id="com.akatsugi.serverdeploy.idea.group.ProjectView"
+               text="服务器部署"
+               description="服务器部署相关操作"
+               popup="true">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-        </action>
-        <action id="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
-                class="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
-                text="上传到服务器"
-                description="将选中的文件或目录上传到已配置的服务器">
-            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-        </action>
+            <action id="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
+                    class="com.akatsugi.serverdeploy.idea.action.ConfigurePathMappingAction"
+                    text="配置路径映射"
+                    description="为选中的文件或目录创建或更新本地与远程目录映射"/>
+            <separator/>
+            <action id="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
+                    class="com.akatsugi.serverdeploy.idea.action.UploadToServerAction"
+                    text="上传到服务器"
+                    description="将选中的文件或目录上传到已配置的服务器"/>
+            <action id="com.akatsugi.serverdeploy.idea.action.ExecuteRemoteShellAction"
+                    class="com.akatsugi.serverdeploy.idea.action.ExecuteRemoteShellAction"
+                    text="执行远程 Shell 命令"
+                    description="对匹配映射的远程目标执行 Shell 命令"/>
+        </group>
     </actions>
 </idea-plugin>

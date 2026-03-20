@@ -12,19 +12,31 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import java.awt.Dimension;
+import java.util.Comparator;
 import java.util.List;
 
 public class UploadTargetDialog extends DialogWrapper {
 
+    private static final int TARGET_COMBO_MIN_WIDTH = 760;
+
     private final JComboBox<ResolvedUploadTarget> targetComboBox;
     private final JBLabel mappingLabel = new JBLabel();
     private final JBLabel remoteTargetLabel = new JBLabel();
-    private final JBCheckBox deleteExistingCheckBox = new JBCheckBox("\u4e0a\u4f20\u524d\u5220\u9664\u8fdc\u7a0b\u5df2\u6709\u76ee\u6807");
+    private final JBCheckBox deleteExistingCheckBox = new JBCheckBox("上传前删除远程已有目标");
 
     public UploadTargetDialog(@Nullable Project project, List<ResolvedUploadTarget> targets) {
         super(project);
         targetComboBox = new JComboBox<>(new CollectionComboBoxModel<>(targets));
-        setTitle("\u4e0a\u4f20\u5230\u670d\u52a1\u5668");
+        targetComboBox.setMaximumRowCount(Math.min(Math.max(targets.size(), 1), 12));
+        targets.stream()
+                .max(Comparator.comparingInt(target -> target.toString().length()))
+                .ifPresent(targetComboBox::setPrototypeDisplayValue);
+
+        Dimension preferredSize = targetComboBox.getPreferredSize();
+        targetComboBox.setPreferredSize(new Dimension(Math.max(preferredSize.width, TARGET_COMBO_MIN_WIDTH), preferredSize.height));
+
+        setTitle("上传到服务器");
         targetComboBox.addActionListener(event -> updatePreview());
         init();
         updatePreview();
@@ -41,12 +53,12 @@ public class UploadTargetDialog extends DialogWrapper {
     @Override
     protected @Nullable JComponent createCenterPanel() {
         JPanel panel = FormBuilder.createFormBuilder()
-                .addLabeledComponent("\u76ee\u6807\u670d\u52a1\u5668", targetComboBox)
-                .addLabeledComponent("\u5339\u914d\u6620\u5c04", mappingLabel)
-                .addLabeledComponent("\u8fdc\u7a0b\u76ee\u6807", remoteTargetLabel)
+                .addLabeledComponent("目标服务器", targetComboBox)
+                .addLabeledComponent("匹配映射", mappingLabel)
+                .addLabeledComponent("远程目标", remoteTargetLabel)
                 .addComponent(deleteExistingCheckBox)
                 .getPanel();
-        panel.setPreferredSize(new java.awt.Dimension(560, 160));
+        panel.setPreferredSize(new Dimension(920, 180));
         return panel;
     }
 

@@ -16,7 +16,7 @@ public class ServerDeployConfigurable implements Configurable {
 
     @Override
     public String getDisplayName() {
-        return "\u670d\u52a1\u5668\u90e8\u7f72";
+        return "服务器部署";
     }
 
     @Override
@@ -32,7 +32,11 @@ public class ServerDeployConfigurable implements Configurable {
         if (panel == null) {
             return false;
         }
-        return panel.isModified(settingsService.getServers(), settingsService.getMappings());
+        return panel.isModified(
+                settingsService.getDefaultShellCommand(),
+                settingsService.getServers(),
+                settingsService.getMappings()
+        );
     }
 
     @Override
@@ -40,10 +44,11 @@ public class ServerDeployConfigurable implements Configurable {
         if (panel == null) {
             return;
         }
+        String defaultShellCommand = panel.getDefaultShellCommand();
         List<ServerConfig> servers = panel.getServers();
         List<DirectoryMapping> mappings = panel.getMappings();
-        panel.validateState(servers, mappings);
-        settingsService.update(servers, mappings);
+        panel.validateState(defaultShellCommand, servers, mappings);
+        settingsService.update(servers, mappings, defaultShellCommand);
     }
 
     @Override
@@ -51,7 +56,11 @@ public class ServerDeployConfigurable implements Configurable {
         if (panel == null) {
             return;
         }
-        panel.setData(settingsService.getServers(), settingsService.getMappings());
+        panel.setData(
+                settingsService.getDefaultShellCommand(),
+                settingsService.getServers(),
+                settingsService.getMappings()
+        );
     }
 
     @Override

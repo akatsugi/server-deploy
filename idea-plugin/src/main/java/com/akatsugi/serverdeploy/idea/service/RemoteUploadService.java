@@ -6,6 +6,7 @@ import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
+import com.jcraft.jsch.SftpProgressMonitor;
 import com.jcraft.jsch.SftpATTRS;
 import com.jcraft.jsch.SftpException;
 
@@ -27,7 +28,7 @@ public class RemoteUploadService {
     public interface ProgressListener {
         void onStart(int totalFiles);
 
-        void onProgress(String fileName, int completed, int totalFiles);
+        void onProgress(String fileName, long uploadedBytes, long totalBytes, int completedFiles, int totalFiles);
     }
 
     public void uploadToExactPath(ServerConfig serverConfig,
@@ -59,9 +60,60 @@ public class RemoteUploadService {
             int completed = 0;
             for (UploadEntry entry : plan.files) {
                 ensureParentDirectory(sftp, entry.remotePath);
-                sftp.put(entry.localPath.toString(), entry.remotePath);
+                int completedFiles = completed;
+                sftp.put(entry.localPath.toString(), entry.remotePath, new SftpProgressMonitor() {
+                    private long transferred;
+
+                    @Override
+                    public void init(int op, String src, String dest, long max) {
+                        transferred = 0L;
+                        progressListener.onProgress(entry.localPath.getFileName().toString(), 0L, entry.size, completedFiles, plan.files.size());
+                    }
+
+                    @Override
+                    public boolean count(long count) {
+                        transferred += count;
+                        progressListener.onProgress(
+                                entry.localPath.getFileName().toString(),
+                                Math.min(transferred, entry.size),
+                                entry.size,
+                                completedFiles,
+                                plan.files.size()
+                        );
+                        return true;
+                    }
+
+                    @Override
+                    public void end() {
+                        progressListener.onProgress(
+                                entry.localPath.getFileName().toString(),
+                                entry.size,
+                                entry.size,
+                                completedFiles + 1,
+                                plan.files.size()
+                        );
+                    }
+                });
                 completed++;
-                progressListener.onProgress(entry.localPath.getFileName().toString(), completed, plan.files.size());
+            }
+        } finally {
+            if (sftp != null) {
+                sftp.disconnect();
+            }
+            session.disconnect();
+        }
+    }
+
+    public void testConnection(ServerConfig serverConfig) throws JSchException, SftpException {
+        Session session = openSession(serverConfig);
+        ChannelSftp sftp = null;
+        try {
+            sftp = (ChannelSftp) session.openChannel("sftp");
+            sftp.connect(CONNECT_TIMEOUT);
+
+            String defaultDirectory = ServerDeploySettingsService.normalizeRemoteDirectory(serverConfig.getDefaultDirectory());
+            if (!"/".equals(defaultDirectory)) {
+                sftp.cd(defaultDirectory);
             }
         } finally {
             if (sftp != null) {
@@ -80,7 +132,7 @@ public class RemoteUploadService {
         String normalizedRemoteTarget = ServerDeploySettingsService.normalizeRemoteDirectory(remoteTargetPath);
         UploadPlan plan = new UploadPlan(normalizedRemoteTarget, Files.isDirectory(normalizedLocalPath));
         if (!plan.directory) {
-            plan.files.add(new UploadEntry(normalizedLocalPath, normalizedRemoteTarget));
+            plan.files.add(new UploadEntry(normalizedLocalPath, normalizedRemoteTarget, Files.size(normalizedLocalPath)));
             return plan;
         }
 
@@ -102,7 +154,7 @@ public class RemoteUploadService {
                 }
                 Path relative = normalizedLocalPath.relativize(file);
                 String remoteFile = ServerDeploySettingsService.normalizeRemoteDirectory(normalizedRemoteTarget + "/" + toRemoteRelative(relative));
-                plan.files.add(new UploadEntry(file, remoteFile));
+                plan.files.add(new UploadEntry(file, remoteFile, attrs.size()));
                 return FileVisitResult.CONTINUE;
             }
         });
@@ -192,10 +244,12 @@ public class RemoteUploadService {
     private static class UploadEntry {
         private final Path localPath;
         private final String remotePath;
+        private final long size;
 
-        private UploadEntry(Path localPath, String remotePath) {
+        private UploadEntry(Path localPath, String remotePath, long size) {
             this.localPath = localPath;
             this.remotePath = remotePath;
+            this.size = size;
         }
     }
 }

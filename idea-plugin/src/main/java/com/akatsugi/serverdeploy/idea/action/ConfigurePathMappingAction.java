@@ -5,15 +5,24 @@ import com.akatsugi.serverdeploy.idea.model.ServerConfig;
 import com.akatsugi.serverdeploy.idea.settings.ServerDeployConfigurable;
 import com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService;
 import com.akatsugi.serverdeploy.idea.ui.MappingEditDialog;
+import com.intellij.ide.projectView.ProjectView;
+import com.intellij.ide.projectView.impl.AbstractProjectViewPane;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.LangDataKeys;
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.options.ShowSettingsUtil;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.util.PsiUtilCore;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.file.Path;
@@ -26,8 +35,12 @@ public class ConfigurePathMappingAction extends AnAction implements DumbAware {
 
     @Override
     public void update(@NotNull AnActionEvent event) {
+        VirtualFile file = resolveSingleFile(event);
         Context context = buildContext(event);
-        event.getPresentation().setEnabledAndVisible(context != null);
+        boolean visible = file != null;
+        boolean enabled = context != null;
+        event.getPresentation().setVisible(visible);
+        event.getPresentation().setEnabled(enabled);
     }
 
     @Override
@@ -91,12 +104,10 @@ public class ConfigurePathMappingAction extends AnAction implements DumbAware {
 
     private Context buildContext(AnActionEvent event) {
         Project project = event.getProject();
-        VirtualFile[] files = event.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY);
-        if (project == null || files == null || files.length != 1) {
+        VirtualFile file = resolveSingleFile(event);
+        if (project == null || file == null) {
             return null;
         }
-
-        VirtualFile file = files[0];
         if (!file.isInLocalFileSystem()) {
             return null;
         }
@@ -109,6 +120,68 @@ public class ConfigurePathMappingAction extends AnAction implements DumbAware {
         return new Context(project, localDirectory);
     }
 
+    private VirtualFile resolveSingleFile(AnActionEvent event) {
+        VirtualFile[] files = event.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY);
+        if (files != null) {
+            return files.length == 1 ? files[0] : null;
+        }
+
+        VirtualFile file = event.getData(CommonDataKeys.VIRTUAL_FILE);
+        if (file != null) {
+            return file;
+        }
+
+        PsiElement[] elements = event.getData(LangDataKeys.PSI_ELEMENT_ARRAY);
+        if (elements != null) {
+            return elements.length == 1 ? PsiUtilCore.getVirtualFile(elements[0]) : null;
+        }
+
+        PsiElement element = event.getData(CommonDataKeys.PSI_ELEMENT);
+        if (element != null) {
+            return PsiUtilCore.getVirtualFile(element);
+        }
+
+        VirtualFile projectFileDirectory = event.getData(PlatformCoreDataKeys.PROJECT_FILE_DIRECTORY);
+        if (projectFileDirectory != null) {
+            return projectFileDirectory;
+        }
+
+        Module module = event.getData(LangDataKeys.MODULE_CONTEXT);
+        if (module == null) {
+            module = event.getData(LangDataKeys.MODULE);
+        }
+        if (module != null) {
+            VirtualFile[] contentRoots = ModuleRootManager.getInstance(module).getContentRoots();
+            if (contentRoots.length == 1) {
+                return contentRoots[0];
+            }
+        }
+
+        Project project = event.getProject();
+        if (project != null) {
+            ProjectView projectView = ProjectView.getInstance(project);
+            AbstractProjectViewPane pane = projectView == null ? null : projectView.getCurrentProjectViewPane();
+            if (pane != null) {
+                PsiElement[] psiElements = pane.getSelectedPSIElements();
+                if (psiElements != null && psiElements.length == 1) {
+                    VirtualFile psiFile = PsiUtilCore.getVirtualFile(psiElements[0]);
+                    if (psiFile != null) {
+                        return psiFile;
+                    }
+                }
+
+                PsiDirectory[] directories = pane.getSelectedDirectories();
+                if (directories != null && directories.length == 1 && directories[0] != null) {
+                    VirtualFile directoryFile = directories[0].getVirtualFile();
+                    if (directoryFile != null) {
+                        return directoryFile;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
     private static class Context {
         private final Project project;
         private final Path localDirectory;

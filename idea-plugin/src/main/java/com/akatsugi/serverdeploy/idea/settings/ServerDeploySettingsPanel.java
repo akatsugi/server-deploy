@@ -13,12 +13,12 @@ import com.intellij.openapi.ui.Messages;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.ListSelectionModel;
-import javax.swing.SwingUtilities;
 import javax.swing.border.TitledBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.AbstractTableModel;
@@ -27,6 +27,9 @@ import javax.swing.table.TableColumnModel;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -39,7 +42,10 @@ import java.util.stream.Collectors;
 
 public class ServerDeploySettingsPanel {
 
+    private static final String SHELL_COMMAND_HINT = "支持占位符：${remotePath}、${remoteDirectory}、${serverName}、${host}、${username}、${defaultDirectory}";
+
     private final JPanel rootPanel = new JPanel(new BorderLayout(0, 12));
+    private final JTextArea defaultShellCommandArea = new JTextArea(4, 80);
     private final List<ServerConfig> servers = new ArrayList<>();
     private final List<DirectoryMapping> mappings = new ArrayList<>();
     private final ServerTableModel serverTableModel = new ServerTableModel();
@@ -58,17 +64,8 @@ public class ServerDeploySettingsPanel {
         serverScrollPane.setPreferredSize(new Dimension(920, 210));
         mappingScrollPane.setPreferredSize(new Dimension(920, 290));
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-                createServerPanel(serverScrollPane),
-                createMappingPanel(mappingScrollPane));
-        splitPane.setResizeWeight(0.42);
-        splitPane.setContinuousLayout(true);
-        splitPane.setDividerSize(8);
-        splitPane.setOneTouchExpandable(true);
-        SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.42));
-
-        rootPanel.add(createToolbar(), BorderLayout.NORTH);
-        rootPanel.add(splitPane, BorderLayout.CENTER);
+        rootPanel.add(createNorthPanel(), BorderLayout.NORTH);
+        rootPanel.add(createContentPanel(serverScrollPane, mappingScrollPane), BorderLayout.CENTER);
 
         configureServerColumns();
         configureMappingColumns();
@@ -78,7 +75,8 @@ public class ServerDeploySettingsPanel {
         return rootPanel;
     }
 
-    public void setData(List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues) {
+    public void setData(String defaultShellCommand, List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues) {
+        defaultShellCommandArea.setText(ServerDeploySettingsService.normalizeShellCommand(defaultShellCommand));
         servers.clear();
         mappings.clear();
         servers.addAll(copyServers(serverValues));
@@ -98,29 +96,45 @@ public class ServerDeploySettingsPanel {
         return copyMappings(mappings);
     }
 
-    public boolean isModified(List<ServerConfig> originalServers, List<DirectoryMapping> originalMappings) {
-        return !copyServers(originalServers).equals(copyServers(servers))
+    public String getDefaultShellCommand() {
+        return ServerDeploySettingsService.normalizeShellCommand(defaultShellCommandArea.getText());
+    }
+
+    public boolean isModified(String originalDefaultShellCommand, List<ServerConfig> originalServers, List<DirectoryMapping> originalMappings) {
+        return !Objects.equals(ServerDeploySettingsService.normalizeShellCommand(originalDefaultShellCommand), getDefaultShellCommand())
+                || !copyServers(originalServers).equals(copyServers(servers))
                 || !copyMappings(originalMappings).equals(copyMappings(mappings));
     }
 
-    public void validateState(List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues) throws ConfigurationException {
+    public void validateState(String defaultShellCommand, List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues)
+            throws ConfigurationException {
+        if (isBlank(defaultShellCommand)) {
+            throw new ConfigurationException("默认 Shell 命令不能为空。");
+        }
         for (ServerConfig server : serverValues) {
             if (isBlank(server.getName()) || isBlank(server.getHost()) || isBlank(server.getUsername())
                     || isBlank(server.getPassword()) || isBlank(server.getDefaultDirectory())) {
-                throw new ConfigurationException("\u670d\u52a1\u5668\u914d\u7f6e\u9879\u4e0d\u80fd\u4e3a\u7a7a\u3002");
+                throw new ConfigurationException("服务器配置项不能为空。");
             }
         }
         for (DirectoryMapping mapping : mappingValues) {
             if (isBlank(mapping.getServerId()) || isBlank(mapping.getLocalDirectory()) || isBlank(mapping.getRemoteDirectory())) {
-                throw new ConfigurationException("\u6620\u5c04\u914d\u7f6e\u9879\u4e0d\u80fd\u4e3a\u7a7a\u3002");
+                throw new ConfigurationException("映射配置项不能为空。");
             }
         }
     }
 
+    private JComponent createNorthPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.add(createToolbar(), BorderLayout.NORTH);
+        panel.add(createDefaultCommandPanel(), BorderLayout.CENTER);
+        return panel;
+    }
+
     private JPanel createToolbar() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton importButton = new JButton("\u5bfc\u5165 JSON");
-        JButton exportButton = new JButton("\u5bfc\u51fa JSON");
+        JButton importButton = new JButton("导入 JSON");
+        JButton exportButton = new JButton("导出 JSON");
         importButton.addActionListener(event -> importFromJson());
         exportButton.addActionListener(event -> exportToJson());
         panel.add(importButton);
@@ -128,9 +142,43 @@ public class ServerDeploySettingsPanel {
         return panel;
     }
 
+    private JComponent createDefaultCommandPanel() {
+        defaultShellCommandArea.setLineWrap(true);
+        defaultShellCommandArea.setWrapStyleWord(true);
+
+        JPanel panel = new JPanel(new BorderLayout(0, 6));
+        panel.setBorder(new TitledBorder("默认远程 Shell 命令"));
+        panel.add(new JScrollPane(defaultShellCommandArea), BorderLayout.CENTER);
+        panel.add(new JLabel(SHELL_COMMAND_HINT), BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JComponent createContentPanel(JScrollPane serverScrollPane, JScrollPane mappingScrollPane) {
+        JPanel panel = new JPanel(new GridBagLayout());
+
+        GridBagConstraints serverConstraints = new GridBagConstraints();
+        serverConstraints.gridx = 0;
+        serverConstraints.gridy = 0;
+        serverConstraints.weightx = 1.0;
+        serverConstraints.weighty = 0.42;
+        serverConstraints.fill = GridBagConstraints.BOTH;
+        serverConstraints.insets = new Insets(0, 0, 6, 0);
+        panel.add(createServerPanel(serverScrollPane), serverConstraints);
+
+        GridBagConstraints mappingConstraints = new GridBagConstraints();
+        mappingConstraints.gridx = 0;
+        mappingConstraints.gridy = 1;
+        mappingConstraints.weightx = 1.0;
+        mappingConstraints.weighty = 0.58;
+        mappingConstraints.fill = GridBagConstraints.BOTH;
+        panel.add(createMappingPanel(mappingScrollPane), mappingConstraints);
+
+        return panel;
+    }
+
     private JPanel createServerPanel(JScrollPane scrollPane) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("\u670d\u52a1\u5668\u5217\u8868"));
+        panel.setBorder(new TitledBorder("服务器列表"));
         panel.add(scrollPane, BorderLayout.CENTER);
         panel.add(createServerButtons(), BorderLayout.SOUTH);
         return panel;
@@ -138,7 +186,7 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createMappingPanel(JScrollPane scrollPane) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("\u76ee\u5f55\u6620\u5c04"));
+        panel.setBorder(new TitledBorder("目录映射"));
         panel.add(scrollPane, BorderLayout.CENTER);
         panel.add(createMappingButtons(), BorderLayout.SOUTH);
         return panel;
@@ -146,9 +194,9 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createServerButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton addButton = new JButton("\u65b0\u589e");
-        JButton editButton = new JButton("\u7f16\u8f91");
-        JButton removeButton = new JButton("\u5220\u9664");
+        JButton addButton = new JButton("新增");
+        JButton editButton = new JButton("编辑");
+        JButton removeButton = new JButton("删除");
         addButton.addActionListener(event -> addServer());
         editButton.addActionListener(event -> editServer());
         removeButton.addActionListener(event -> removeServer());
@@ -160,9 +208,9 @@ public class ServerDeploySettingsPanel {
 
     private JPanel createMappingButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton addButton = new JButton("\u65b0\u589e");
-        JButton editButton = new JButton("\u7f16\u8f91");
-        JButton removeButton = new JButton("\u5220\u9664");
+        JButton addButton = new JButton("新增");
+        JButton editButton = new JButton("编辑");
+        JButton removeButton = new JButton("删除");
         addButton.addActionListener(event -> addMapping());
         editButton.addActionListener(event -> editMapping());
         removeButton.addActionListener(event -> removeMapping());
@@ -257,7 +305,7 @@ public class ServerDeploySettingsPanel {
 
     private void addMapping() {
         if (servers.isEmpty()) {
-            Messages.showInfoMessage(rootPanel, "\u8bf7\u5148\u65b0\u589e\u670d\u52a1\u5668\uff0c\u518d\u521b\u5efa\u76ee\u5f55\u6620\u5c04\u3002", "\u670d\u52a1\u5668\u90e8\u7f72");
+            Messages.showInfoMessage(rootPanel, "请先新增服务器，再创建目录映射。", "服务器部署");
             return;
         }
         String projectDirectory = determineDefaultProjectDirectory();
@@ -319,28 +367,29 @@ public class ServerDeploySettingsPanel {
 
     private void exportToJson() {
         JFileChooser chooser = createJsonChooser();
-        chooser.setDialogTitle("\u5bfc\u51fa\u670d\u52a1\u5668\u90e8\u7f72\u914d\u7f6e");
+        chooser.setDialogTitle("导出服务器部署配置");
         chooser.setSelectedFile(new java.io.File("server-deploy-config.json"));
         if (chooser.showSaveDialog(rootPanel) != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return;
         }
 
         ServerDeploySettingsState state = new ServerDeploySettingsState();
+        state.setDefaultShellCommand(getDefaultShellCommand());
         state.setServers(getServers());
         state.setMappings(getMappings());
 
         try {
             Path file = ensureJsonExtension(chooser.getSelectedFile().toPath());
             Files.writeString(file, settingsJsonService.toJson(state), StandardCharsets.UTF_8);
-            Messages.showInfoMessage(rootPanel, "\u914d\u7f6e\u5df2\u5bfc\u51fa\u5230\uff1a\n" + file, "\u670d\u52a1\u5668\u90e8\u7f72");
+            Messages.showInfoMessage(rootPanel, "配置已导出到：\n" + file, "服务器部署");
         } catch (IOException exception) {
-            Messages.showErrorDialog(rootPanel, exception.getMessage(), "\u5bfc\u51fa\u5931\u8d25");
+            Messages.showErrorDialog(rootPanel, exception.getMessage(), "导出失败");
         }
     }
 
     private void importFromJson() {
         JFileChooser chooser = createJsonChooser();
-        chooser.setDialogTitle("\u5bfc\u5165\u670d\u52a1\u5668\u90e8\u7f72\u914d\u7f6e");
+        chooser.setDialogTitle("导入服务器部署配置");
         if (chooser.showOpenDialog(rootPanel) != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return;
         }
@@ -348,16 +397,16 @@ public class ServerDeploySettingsPanel {
         try {
             String json = Files.readString(chooser.getSelectedFile().toPath(), StandardCharsets.UTF_8);
             ServerDeploySettingsState imported = settingsService.sanitize(settingsJsonService.fromJson(json));
-            setData(imported.getServers(), imported.getMappings());
-            Messages.showInfoMessage(rootPanel, "\u914d\u7f6e\u5df2\u5bfc\u5165\uff0c\u8bf7\u70b9\u51fb\u201c\u5e94\u7528\u201d\u6216\u201c\u786e\u5b9a\u201d\u4fdd\u5b58\u3002", "\u670d\u52a1\u5668\u90e8\u7f72");
+            setData(imported.getDefaultShellCommand(), imported.getServers(), imported.getMappings());
+            Messages.showInfoMessage(rootPanel, "配置已导入，请点击“应用”或“确定”保存。", "服务器部署");
         } catch (Exception exception) {
-            Messages.showErrorDialog(rootPanel, exception.getMessage(), "\u5bfc\u5165\u5931\u8d25");
+            Messages.showErrorDialog(rootPanel, exception.getMessage(), "导入失败");
         }
     }
 
     private JFileChooser createJsonChooser() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(new FileNameExtensionFilter("JSON \u6587\u4ef6", "json"));
+        chooser.setFileFilter(new FileNameExtensionFilter("JSON 文件", "json"));
         String projectDirectory = determineDefaultProjectDirectory();
         if (!isBlank(projectDirectory)) {
             chooser.setCurrentDirectory(new java.io.File(projectDirectory));
@@ -412,7 +461,7 @@ public class ServerDeploySettingsPanel {
 
     private class ServerTableModel extends AbstractTableModel {
 
-        private final String[] columns = {"\u540d\u79f0", "\u4e3b\u673a", "\u7aef\u53e3", "\u7528\u6237\u540d", "\u9ed8\u8ba4\u8fdc\u7a0b\u76ee\u5f55"};
+        private final String[] columns = {"名称", "主机", "端口", "用户名", "默认远程目录"};
 
         @Override
         public int getRowCount() {
@@ -445,7 +494,7 @@ public class ServerDeploySettingsPanel {
 
     private class MappingTableModel extends AbstractTableModel {
 
-        private final String[] columns = {"\u670d\u52a1\u5668", "\u672c\u5730\u76ee\u5f55", "\u8fdc\u7a0b\u76ee\u5f55"};
+        private final String[] columns = {"服务器", "本地目录", "远程目录"};
 
         @Override
         public int getRowCount() {
