@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>com.akatsugi.serverdeploy.idea</id>
-    <name>服务器部署</name>
+    <name>Server Deploy</name>
     <vendor>Akatsugi</vendor>
 
     <description><![CDATA[
@@ -13,7 +13,7 @@
         <applicationService serviceImplementation="com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService"/>
         <applicationConfigurable
                 id="com.akatsugi.serverdeploy.idea.settings"
-                displayName="服务器部署"
+                displayName="Server Deploy"
                 parentId="tools"
                 instance="com.akatsugi.serverdeploy.idea.settings.ServerDeployConfigurable"/>
         <notificationGroup

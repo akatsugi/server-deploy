@@ -1,6 +1,6 @@
 package com.akatsugi.serverdeploy.idea.action;
 
-import com.akatsugi.serverdeploy.idea.model.ResolvedUploadTarget;
+import com.akatsugi.serverdeploy.idea.model.BatchUploadTarget;
 import com.akatsugi.serverdeploy.idea.service.MappingResolver;
 import com.akatsugi.serverdeploy.idea.service.RemoteUploadService;
 import com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService;
@@ -31,8 +31,11 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class UploadToServerAction extends AnAction implements DumbAware {
 
@@ -42,9 +45,9 @@ public class UploadToServerAction extends AnAction implements DumbAware {
 
     @Override
     public void update(@NotNull AnActionEvent event) {
-        VirtualFile file = resolveSingleFile(event);
+        List<VirtualFile> files = resolveSelectedFiles(event);
         Context context = buildContext(event);
-        boolean visible = file != null;
+        boolean visible = !files.isEmpty();
         boolean enabled = context != null && !context.targets.isEmpty();
         event.getPresentation().setVisible(visible);
         event.getPresentation().setEnabled(enabled);
@@ -57,30 +60,37 @@ public class UploadToServerAction extends AnAction implements DumbAware {
             return;
         }
 
-        UploadTargetDialog dialog = new UploadTargetDialog(context.project, context.targets);
+        UploadTargetDialog dialog = new UploadTargetDialog(context.project, context.selectedPaths.size(), context.targets);
         if (!dialog.showAndGet()) {
             return;
         }
 
-        ResolvedUploadTarget target = dialog.getSelectedTarget();
+        BatchUploadTarget target = dialog.getSelectedTarget();
         if (target == null) {
             return;
         }
 
         settingsService.markServerLastUsed(target.getServerConfig().getId());
-        runUpload(context.project, context.selectedPath, target, dialog.isDeleteExisting());
+        runUpload(context.project, target, dialog.isDeleteExisting());
     }
 
-    private void runUpload(Project project, Path selectedPath, ResolvedUploadTarget target, boolean deleteExisting) {
+    private void runUpload(Project project, BatchUploadTarget target, boolean deleteExisting) {
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "上传到服务器", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 indicator.setIndeterminate(false);
                 try {
-                    remoteUploadService.uploadToExactPath(
+                    List<RemoteUploadService.UploadRequest> requests = target.getUploadItems().stream()
+                            .map(item -> new RemoteUploadService.UploadRequest(
+                                    item.localPath(),
+                                    item.target().getRemoteTargetPath(),
+                                    item.target().getRemoteMappingDirectory()
+                            ))
+                            .toList();
+
+                    remoteUploadService.uploadToExactPaths(
                             target.getServerConfig(),
-                            selectedPath,
-                            target.getRemoteTargetPath(),
+                            requests,
                             deleteExisting,
                             new RemoteUploadService.ProgressListener() {
                                 @Override
@@ -91,8 +101,15 @@ public class UploadToServerAction extends AnAction implements DumbAware {
                                 }
 
                                 @Override
-                                public void onProgress(String fileName, long uploadedBytes, long totalBytes, int completedFiles, int totalFiles) {
-                                    indicator.setText("正在上传到 " + target.getServerConfig().getName());
+                                public void onProgress(
+                                        String fileName,
+                                        String mappingDirectory,
+                                        long uploadedBytes,
+                                        long totalBytes,
+                                        int completedFiles,
+                                        int totalFiles
+                                ) {
+                                    indicator.setText("正在上传到 " + target.getServerConfig().getName() + " | 映射目录：" + mappingDirectory);
                                     indicator.setText2(fileName + " (" + formatBytes(uploadedBytes) + " / " + formatBytes(totalBytes)
                                             + ", " + completedFiles + "/" + totalFiles + ")");
                                     double fileFraction = totalBytes <= 0 ? 0.0 : Math.min(1.0, (double) uploadedBytes / (double) totalBytes);
@@ -102,7 +119,7 @@ public class UploadToServerAction extends AnAction implements DumbAware {
                             }
                     );
                     showNotification(project, NotificationType.INFORMATION, "上传完成",
-                            target.getServerConfig().getName() + " -> " + target.getRemoteTargetPath());
+                            target.getServerConfig().getName() + "，共上传 " + target.getUploadItems().size() + " 个选择项");
                 } catch (IOException | JSchException | SftpException exception) {
                     showNotification(project, NotificationType.ERROR, "上传失败", exception.getMessage());
                 }
@@ -119,37 +136,76 @@ public class UploadToServerAction extends AnAction implements DumbAware {
 
     private Context buildContext(AnActionEvent event) {
         Project project = event.getProject();
-        VirtualFile file = resolveSingleFile(event);
-        if (project == null || file == null) {
-            return null;
-        }
-        if (!file.isInLocalFileSystem()) {
+        List<VirtualFile> files = resolveSelectedFiles(event);
+        if (project == null || files.isEmpty()) {
             return null;
         }
 
-        Path selectedPath = Path.of(file.getPath()).toAbsolutePath().normalize();
-        List<ResolvedUploadTarget> targets = mappingResolver.resolve(
-                selectedPath,
+        List<Path> selectedPaths = new ArrayList<>();
+        for (VirtualFile file : files) {
+            if (file == null || !file.isInLocalFileSystem()) {
+                return null;
+            }
+            selectedPaths.add(Path.of(file.getPath()).toAbsolutePath().normalize());
+        }
+
+        List<BatchUploadTarget> targets = mappingResolver.resolveBatch(
+                selectedPaths,
                 settingsService.getServers(),
                 settingsService.getMappings()
         );
-        return targets.isEmpty() ? null : new Context(project, selectedPath, targets);
+        return targets.isEmpty() ? null : new Context(project, selectedPaths, targets);
+    }
+
+    private List<VirtualFile> resolveSelectedFiles(AnActionEvent event) {
+        VirtualFile[] files = event.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY);
+        if (files != null && files.length > 0) {
+            return deduplicate(List.of(files));
+        }
+
+        List<VirtualFile> resolved = new ArrayList<>();
+        VirtualFile single = resolveSingleFile(event);
+        if (single != null) {
+            resolved.add(single);
+        }
+
+        Project project = event.getProject();
+        if (project != null) {
+            ProjectView projectView = ProjectView.getInstance(project);
+            AbstractProjectViewPane pane = projectView == null ? null : projectView.getCurrentProjectViewPane();
+            if (pane != null) {
+                PsiElement[] psiElements = pane.getSelectedPSIElements();
+                if (psiElements != null && psiElements.length > 0) {
+                    for (PsiElement psiElement : psiElements) {
+                        VirtualFile psiFile = PsiUtilCore.getVirtualFile(psiElement);
+                        if (psiFile != null) {
+                            resolved.add(psiFile);
+                        }
+                    }
+                }
+
+                PsiDirectory[] directories = pane.getSelectedDirectories();
+                if (directories != null && directories.length > 0) {
+                    for (PsiDirectory directory : directories) {
+                        if (directory != null && directory.getVirtualFile() != null) {
+                            resolved.add(directory.getVirtualFile());
+                        }
+                    }
+                }
+            }
+        }
+        return deduplicate(resolved);
     }
 
     private VirtualFile resolveSingleFile(AnActionEvent event) {
-        VirtualFile[] files = event.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY);
-        if (files != null) {
-            return files.length == 1 ? files[0] : null;
-        }
-
         VirtualFile file = event.getData(CommonDataKeys.VIRTUAL_FILE);
         if (file != null) {
             return file;
         }
 
         PsiElement[] elements = event.getData(LangDataKeys.PSI_ELEMENT_ARRAY);
-        if (elements != null) {
-            return elements.length == 1 ? PsiUtilCore.getVirtualFile(elements[0]) : null;
+        if (elements != null && elements.length == 1) {
+            return PsiUtilCore.getVirtualFile(elements[0]);
         }
 
         PsiElement element = event.getData(CommonDataKeys.PSI_ELEMENT);
@@ -198,6 +254,17 @@ public class UploadToServerAction extends AnAction implements DumbAware {
 
         return null;
     }
+
+    private List<VirtualFile> deduplicate(List<VirtualFile> files) {
+        Map<String, VirtualFile> deduplicated = new LinkedHashMap<>();
+        for (VirtualFile file : files) {
+            if (file != null) {
+                deduplicated.putIfAbsent(file.getPath(), file);
+            }
+        }
+        return new ArrayList<>(deduplicated.values());
+    }
+
     private String formatBytes(long bytes) {
         if (bytes < 1024) {
             return bytes + " B";
@@ -214,13 +281,13 @@ public class UploadToServerAction extends AnAction implements DumbAware {
 
     private static class Context {
         private final Project project;
-        private final Path selectedPath;
-        private final List<ResolvedUploadTarget> targets;
+        private final List<Path> selectedPaths;
+        private final List<BatchUploadTarget> targets;
 
-        private Context(Project project, Path selectedPath, List<ResolvedUploadTarget> targets) {
+        private Context(Project project, List<Path> selectedPaths, List<BatchUploadTarget> targets) {
             this.project = project;
-            this.selectedPath = selectedPath;
-            this.targets = targets;
+            this.selectedPaths = List.copyOf(selectedPaths);
+            this.targets = List.copyOf(targets);
         }
     }
 }

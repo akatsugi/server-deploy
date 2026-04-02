@@ -6,9 +6,9 @@ import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
-import com.jcraft.jsch.SftpProgressMonitor;
 import com.jcraft.jsch.SftpATTRS;
 import com.jcraft.jsch.SftpException;
+import com.jcraft.jsch.SftpProgressMonitor;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -28,16 +28,40 @@ public class RemoteUploadService {
     public interface ProgressListener {
         void onStart(int totalFiles);
 
-        void onProgress(String fileName, long uploadedBytes, long totalBytes, int completedFiles, int totalFiles);
+        void onProgress(String fileName, String mappingDirectory, long uploadedBytes, long totalBytes, int completedFiles, int totalFiles);
     }
 
-    public void uploadToExactPath(ServerConfig serverConfig,
+    public void uploadToExactPath(
+            ServerConfig serverConfig,
             Path localPath,
             String remoteTargetPath,
+            String mappingDirectory,
             boolean deleteExisting,
-            ProgressListener progressListener) throws IOException, JSchException, SftpException {
-        UploadPlan plan = buildUploadPlan(localPath, remoteTargetPath);
-        progressListener.onStart(plan.files.size());
+            ProgressListener progressListener
+    ) throws IOException, JSchException, SftpException {
+        uploadToExactPaths(
+                serverConfig,
+                List.of(new UploadRequest(localPath, remoteTargetPath, mappingDirectory)),
+                deleteExisting,
+                progressListener
+        );
+    }
+
+    public void uploadToExactPaths(
+            ServerConfig serverConfig,
+            List<UploadRequest> requests,
+            boolean deleteExisting,
+            ProgressListener progressListener
+    ) throws IOException, JSchException, SftpException {
+        List<UploadPlan> plans = new ArrayList<>();
+        int totalFiles = 0;
+        for (UploadRequest request : requests) {
+            UploadPlan plan = buildUploadPlan(request.localPath(), request.remoteTargetPath(), request.mappingDirectory());
+            plans.add(plan);
+            totalFiles += plan.files.size();
+        }
+        final int totalFileCount = totalFiles;
+        progressListener.onStart(totalFileCount);
 
         Session session = openSession(serverConfig);
         ChannelSftp sftp = null;
@@ -45,56 +69,69 @@ public class RemoteUploadService {
             sftp = (ChannelSftp) session.openChannel("sftp");
             sftp.connect(CONNECT_TIMEOUT);
 
-            if (deleteExisting && exists(sftp, plan.remoteTargetPath)) {
-                deleteRecursively(sftp, plan.remoteTargetPath);
-            }
-
-            if (plan.directory) {
-                for (String directory : plan.remoteDirectories) {
-                    ensureDirectory(sftp, directory);
+            for (UploadPlan plan : plans) {
+                if (deleteExisting && exists(sftp, plan.remoteTargetPath)) {
+                    deleteRecursively(sftp, plan.remoteTargetPath);
                 }
-            } else {
-                ensureParentDirectory(sftp, plan.remoteTargetPath);
+
+                if (plan.directory) {
+                    for (String directory : plan.remoteDirectories) {
+                        ensureDirectory(sftp, directory);
+                    }
+                } else {
+                    ensureParentDirectory(sftp, plan.remoteTargetPath);
+                }
             }
 
             int completed = 0;
-            for (UploadEntry entry : plan.files) {
-                ensureParentDirectory(sftp, entry.remotePath);
-                int completedFiles = completed;
-                sftp.put(entry.localPath.toString(), entry.remotePath, new SftpProgressMonitor() {
-                    private long transferred;
+            for (UploadPlan plan : plans) {
+                for (UploadEntry entry : plan.files) {
+                    ensureParentDirectory(sftp, entry.remotePath);
+                    int completedFiles = completed;
+                    sftp.put(entry.localPath.toString(), entry.remotePath, new SftpProgressMonitor() {
+                        private long transferred;
 
-                    @Override
-                    public void init(int op, String src, String dest, long max) {
-                        transferred = 0L;
-                        progressListener.onProgress(entry.localPath.getFileName().toString(), 0L, entry.size, completedFiles, plan.files.size());
-                    }
+                        @Override
+                        public void init(int op, String src, String dest, long max) {
+                            transferred = 0L;
+                            progressListener.onProgress(
+                                    entry.localPath.getFileName().toString(),
+                                    entry.mappingDirectory,
+                                    0L,
+                                    entry.size,
+                                    completedFiles,
+                                    totalFileCount
+                            );
+                        }
 
-                    @Override
-                    public boolean count(long count) {
-                        transferred += count;
-                        progressListener.onProgress(
-                                entry.localPath.getFileName().toString(),
-                                Math.min(transferred, entry.size),
-                                entry.size,
-                                completedFiles,
-                                plan.files.size()
-                        );
-                        return true;
-                    }
+                        @Override
+                        public boolean count(long count) {
+                            transferred += count;
+                            progressListener.onProgress(
+                                    entry.localPath.getFileName().toString(),
+                                    entry.mappingDirectory,
+                                    Math.min(transferred, entry.size),
+                                    entry.size,
+                                    completedFiles,
+                                    totalFileCount
+                            );
+                            return true;
+                        }
 
-                    @Override
-                    public void end() {
-                        progressListener.onProgress(
-                                entry.localPath.getFileName().toString(),
-                                entry.size,
-                                entry.size,
-                                completedFiles + 1,
-                                plan.files.size()
-                        );
-                    }
-                });
-                completed++;
+                        @Override
+                        public void end() {
+                            progressListener.onProgress(
+                                    entry.localPath.getFileName().toString(),
+                                    entry.mappingDirectory,
+                                    entry.size,
+                                    entry.size,
+                                    completedFiles + 1,
+                                    totalFileCount
+                            );
+                        }
+                    });
+                    completed++;
+                }
             }
         } finally {
             if (sftp != null) {
@@ -123,16 +160,17 @@ public class RemoteUploadService {
         }
     }
 
-    private UploadPlan buildUploadPlan(Path localPath, String remoteTargetPath) throws IOException {
+    private UploadPlan buildUploadPlan(Path localPath, String remoteTargetPath, String mappingDirectory) throws IOException {
         Path normalizedLocalPath = localPath.toAbsolutePath().normalize();
         if (!Files.exists(normalizedLocalPath)) {
             throw new IOException("本地路径不存在：" + normalizedLocalPath);
         }
 
         String normalizedRemoteTarget = ServerDeploySettingsService.normalizeRemoteDirectory(remoteTargetPath);
-        UploadPlan plan = new UploadPlan(normalizedRemoteTarget, Files.isDirectory(normalizedLocalPath));
+        String normalizedMappingDirectory = ServerDeploySettingsService.normalizeRemoteDirectory(mappingDirectory);
+        UploadPlan plan = new UploadPlan(normalizedRemoteTarget, normalizedMappingDirectory, Files.isDirectory(normalizedLocalPath));
         if (!plan.directory) {
-            plan.files.add(new UploadEntry(normalizedLocalPath, normalizedRemoteTarget, Files.size(normalizedLocalPath)));
+            plan.files.add(new UploadEntry(normalizedLocalPath, normalizedRemoteTarget, normalizedMappingDirectory, Files.size(normalizedLocalPath)));
             return plan;
         }
 
@@ -154,7 +192,7 @@ public class RemoteUploadService {
                 }
                 Path relative = normalizedLocalPath.relativize(file);
                 String remoteFile = ServerDeploySettingsService.normalizeRemoteDirectory(normalizedRemoteTarget + "/" + toRemoteRelative(relative));
-                plan.files.add(new UploadEntry(file, remoteFile, attrs.size()));
+                plan.files.add(new UploadEntry(file, remoteFile, normalizedMappingDirectory, attrs.size()));
                 return FileVisitResult.CONTINUE;
             }
         });
@@ -229,14 +267,19 @@ public class RemoteUploadService {
         return relativePath.toString().replace('\\', '/');
     }
 
+    public record UploadRequest(Path localPath, String remoteTargetPath, String mappingDirectory) {
+    }
+
     private static class UploadPlan {
         private final String remoteTargetPath;
+        private final String mappingDirectory;
         private final boolean directory;
         private final List<String> remoteDirectories = new ArrayList<>();
         private final List<UploadEntry> files = new ArrayList<>();
 
-        private UploadPlan(String remoteTargetPath, boolean directory) {
+        private UploadPlan(String remoteTargetPath, String mappingDirectory, boolean directory) {
             this.remoteTargetPath = remoteTargetPath;
+            this.mappingDirectory = mappingDirectory;
             this.directory = directory;
         }
     }
@@ -244,11 +287,13 @@ public class RemoteUploadService {
     private static class UploadEntry {
         private final Path localPath;
         private final String remotePath;
+        private final String mappingDirectory;
         private final long size;
 
-        private UploadEntry(Path localPath, String remotePath, long size) {
+        private UploadEntry(Path localPath, String remotePath, String mappingDirectory, long size) {
             this.localPath = localPath;
             this.remotePath = remotePath;
+            this.mappingDirectory = mappingDirectory;
             this.size = size;
         }
     }
