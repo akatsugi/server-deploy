@@ -5,7 +5,7 @@ import com.akatsugi.serverdeploy.idea.service.MappingResolver;
 import com.akatsugi.serverdeploy.idea.service.RemoteCommandService;
 import com.akatsugi.serverdeploy.idea.settings.ServerDeploySettingsService;
 import com.akatsugi.serverdeploy.idea.ui.ExecuteRemoteCommandDialog;
-import com.akatsugi.serverdeploy.idea.ui.RemoteCommandResultDialog;
+import com.akatsugi.serverdeploy.idea.ui.RemoteCommandConsoleDialog;
 import com.intellij.ide.projectView.ProjectView;
 import com.intellij.ide.projectView.impl.AbstractProjectViewPane;
 import com.intellij.notification.NotificationGroupManager;
@@ -15,11 +15,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ModuleRootManager;
@@ -61,6 +57,7 @@ public class ExecuteRemoteShellAction extends AnAction implements DumbAware {
                 context.selectedPath,
                 context.targets,
                 settingsService.getDefaultShellCommand(),
+                settingsService.getShellCommandCandidates(),
                 remoteCommandService
         );
         if (!dialog.showAndGet()) {
@@ -78,27 +75,18 @@ public class ExecuteRemoteShellAction extends AnAction implements DumbAware {
     }
 
     private void runCommand(Project project, ResolvedUploadTarget target, String command) {
-        ProgressManager.getInstance().run(new Task.Backgroundable(project, "执行远程 Shell 命令", true) {
-            @Override
-            public void run(@NotNull ProgressIndicator indicator) {
-                indicator.setIndeterminate(true);
-                indicator.setText("正在连接 " + target.getServerConfig().getName());
-                try {
-                    RemoteCommandService.CommandResult result = remoteCommandService.execute(target.getServerConfig(), command);
-                    NotificationType type = result.isSuccess() ? NotificationType.INFORMATION : NotificationType.WARNING;
-                    showNotification(project, type, result.isSuccess() ? "远程命令执行完成" : "远程命令执行返回非 0",
-                            target.getServerConfig().getName() + "，退出码：" + result.getExitCode());
-                    ApplicationManager.getApplication().invokeLater(
-                            () -> new RemoteCommandResultDialog(project, target.getServerConfig().getName(), command, result).show()
-                    );
-                } catch (IOException | InterruptedException | RuntimeException | com.jcraft.jsch.JSchException exception) {
-                    showNotification(project, NotificationType.ERROR, "远程命令执行失败", exception.getMessage());
-                    if (exception instanceof InterruptedException) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        });
+        RemoteCommandConsoleDialog consoleDialog = new RemoteCommandConsoleDialog(project, target, command);
+        try {
+            RemoteCommandService.RunningCommand runningCommand = remoteCommandService.start(
+                    target.getServerConfig(),
+                    command,
+                    consoleDialog.createOutputListener()
+            );
+            consoleDialog.attachRunningCommand(runningCommand);
+            consoleDialog.show();
+        } catch (IOException | RuntimeException | com.jcraft.jsch.JSchException exception) {
+            showNotification(project, NotificationType.ERROR, "远程命令执行失败", exception.getMessage());
+        }
     }
 
     private void showNotification(Project project, NotificationType type, String title, String content) {
@@ -186,6 +174,7 @@ public class ExecuteRemoteShellAction extends AnAction implements DumbAware {
 
         return null;
     }
+
     private static class Context {
         private final Project project;
         private final Path selectedPath;

@@ -34,6 +34,7 @@ public class ServerDeployConfigurable implements Configurable {
         }
         return panel.isModified(
                 settingsService.getDefaultShellCommand(),
+                settingsService.getShellCommandCandidates(),
                 settingsService.getServers(),
                 settingsService.getMappings()
         );
@@ -45,10 +46,11 @@ public class ServerDeployConfigurable implements Configurable {
             return;
         }
         String defaultShellCommand = panel.getDefaultShellCommand();
+        List<String> shellCommandCandidates = panel.getShellCommandCandidates();
         List<ServerConfig> servers = panel.getServers();
         List<DirectoryMapping> mappings = panel.getMappings();
-        panel.validateState(defaultShellCommand, servers, mappings);
-        settingsService.update(servers, mappings, defaultShellCommand);
+        panel.validateState(defaultShellCommand, shellCommandCandidates, servers, mappings);
+        settingsService.update(servers, mappings, defaultShellCommand, shellCommandCandidates);
     }
 
     @Override
@@ -58,6 +60,7 @@ public class ServerDeployConfigurable implements Configurable {
         }
         panel.setData(
                 settingsService.getDefaultShellCommand(),
+                settingsService.getShellCommandCandidates(),
                 settingsService.getServers(),
                 settingsService.getMappings()
         );

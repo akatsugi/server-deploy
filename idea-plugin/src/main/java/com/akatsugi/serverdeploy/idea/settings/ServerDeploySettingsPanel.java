@@ -10,6 +10,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.ui.Messages;
 
+import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -42,10 +44,14 @@ import java.util.stream.Collectors;
 
 public class ServerDeploySettingsPanel {
 
-    private static final String SHELL_COMMAND_HINT = "支持占位符：${remotePath}、${remoteDirectory}、${serverName}、${host}、${username}、${defaultDirectory}";
+    private static final String SHELL_COMMAND_HINT =
+            "支持占位符：${remotePath}、${remoteDirectory}、${serverName}、${host}、${username}、${defaultDirectory}";
+    private static final String CANDIDATE_COMMANDS_HINT =
+            "每行一条候选命令。执行远程命令时可从候选中一键填入，再继续手动编辑。";
 
     private final JPanel rootPanel = new JPanel(new BorderLayout(0, 12));
     private final JTextArea defaultShellCommandArea = new JTextArea(4, 80);
+    private final JTextArea shellCommandCandidatesArea = new JTextArea(5, 80);
     private final List<ServerConfig> servers = new ArrayList<>();
     private final List<DirectoryMapping> mappings = new ArrayList<>();
     private final ServerTableModel serverTableModel = new ServerTableModel();
@@ -64,6 +70,7 @@ public class ServerDeploySettingsPanel {
         serverScrollPane.setPreferredSize(new Dimension(920, 210));
         mappingScrollPane.setPreferredSize(new Dimension(920, 290));
 
+        rootPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
         rootPanel.add(createNorthPanel(), BorderLayout.NORTH);
         rootPanel.add(createContentPanel(serverScrollPane, mappingScrollPane), BorderLayout.CENTER);
 
@@ -75,8 +82,16 @@ public class ServerDeploySettingsPanel {
         return rootPanel;
     }
 
-    public void setData(String defaultShellCommand, List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues) {
+    public void setData(
+            String defaultShellCommand,
+            List<String> shellCommandCandidates,
+            List<ServerConfig> serverValues,
+            List<DirectoryMapping> mappingValues
+    ) {
         defaultShellCommandArea.setText(ServerDeploySettingsService.normalizeShellCommand(defaultShellCommand));
+        shellCommandCandidatesArea.setText(String.join("\n",
+                ServerDeploySettingsService.normalizeShellCommandCandidates(shellCommandCandidates, false)));
+
         servers.clear();
         mappings.clear();
         servers.addAll(copyServers(serverValues));
@@ -100,16 +115,39 @@ public class ServerDeploySettingsPanel {
         return ServerDeploySettingsService.normalizeShellCommand(defaultShellCommandArea.getText());
     }
 
-    public boolean isModified(String originalDefaultShellCommand, List<ServerConfig> originalServers, List<DirectoryMapping> originalMappings) {
+    public List<String> getShellCommandCandidates() {
+        return ServerDeploySettingsService.normalizeShellCommandCandidates(
+                shellCommandCandidatesArea.getText().lines().collect(Collectors.toList()),
+                false
+        );
+    }
+
+    public boolean isModified(
+            String originalDefaultShellCommand,
+            List<String> originalShellCommandCandidates,
+            List<ServerConfig> originalServers,
+            List<DirectoryMapping> originalMappings
+    ) {
         return !Objects.equals(ServerDeploySettingsService.normalizeShellCommand(originalDefaultShellCommand), getDefaultShellCommand())
+                || !Objects.equals(
+                ServerDeploySettingsService.normalizeShellCommandCandidates(originalShellCommandCandidates, false),
+                getShellCommandCandidates()
+        )
                 || !copyServers(originalServers).equals(copyServers(servers))
                 || !copyMappings(originalMappings).equals(copyMappings(mappings));
     }
 
-    public void validateState(String defaultShellCommand, List<ServerConfig> serverValues, List<DirectoryMapping> mappingValues)
-            throws ConfigurationException {
+    public void validateState(
+            String defaultShellCommand,
+            List<String> shellCommandCandidates,
+            List<ServerConfig> serverValues,
+            List<DirectoryMapping> mappingValues
+    ) throws ConfigurationException {
         if (isBlank(defaultShellCommand)) {
             throw new ConfigurationException("默认 Shell 命令不能为空。");
+        }
+        if (shellCommandCandidates.stream().anyMatch(this::isBlank)) {
+            throw new ConfigurationException("候选 Shell 命令中不能包含空行。");
         }
         for (ServerConfig server : serverValues) {
             if (isBlank(server.getName()) || isBlank(server.getHost()) || isBlank(server.getUsername())
@@ -119,7 +157,7 @@ public class ServerDeploySettingsPanel {
         }
         for (DirectoryMapping mapping : mappingValues) {
             if (isBlank(mapping.getServerId()) || isBlank(mapping.getLocalDirectory()) || isBlank(mapping.getRemoteDirectory())) {
-                throw new ConfigurationException("映射配置项不能为空。");
+                throw new ConfigurationException("目录映射配置项不能为空。");
             }
         }
     }
@@ -127,7 +165,7 @@ public class ServerDeploySettingsPanel {
     private JComponent createNorthPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 8));
         panel.add(createToolbar(), BorderLayout.NORTH);
-        panel.add(createDefaultCommandPanel(), BorderLayout.CENTER);
+        panel.add(createCommandSettingsPanel(), BorderLayout.CENTER);
         return panel;
     }
 
@@ -142,14 +180,25 @@ public class ServerDeploySettingsPanel {
         return panel;
     }
 
-    private JComponent createDefaultCommandPanel() {
+    private JComponent createCommandSettingsPanel() {
         defaultShellCommandArea.setLineWrap(true);
         defaultShellCommandArea.setWrapStyleWord(true);
+        shellCommandCandidatesArea.setLineWrap(true);
+        shellCommandCandidatesArea.setWrapStyleWord(true);
 
+        JPanel container = new JPanel();
+        container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+        container.add(createTextAreaPanel("默认远程 Shell 命令", defaultShellCommandArea, SHELL_COMMAND_HINT));
+        container.add(createTextAreaPanel("候选 Shell 命令", shellCommandCandidatesArea, CANDIDATE_COMMANDS_HINT));
+        return container;
+    }
+
+    private JComponent createTextAreaPanel(String title, JTextArea textArea, String hint) {
         JPanel panel = new JPanel(new BorderLayout(0, 6));
-        panel.setBorder(new TitledBorder("默认远程 Shell 命令"));
-        panel.add(new JScrollPane(defaultShellCommandArea), BorderLayout.CENTER);
-        panel.add(new JLabel(SHELL_COMMAND_HINT), BorderLayout.SOUTH);
+        panel.setBorder(new TitledBorder(title));
+        panel.add(new JScrollPane(textArea), BorderLayout.CENTER);
+        panel.add(new JLabel(hint), BorderLayout.SOUTH);
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, title.contains("候选") ? 180 : 150));
         return panel;
     }
 
@@ -375,6 +424,7 @@ public class ServerDeploySettingsPanel {
 
         ServerDeploySettingsState state = new ServerDeploySettingsState();
         state.setDefaultShellCommand(getDefaultShellCommand());
+        state.setShellCommandCandidates(getShellCommandCandidates());
         state.setServers(getServers());
         state.setMappings(getMappings());
 
@@ -397,7 +447,12 @@ public class ServerDeploySettingsPanel {
         try {
             String json = Files.readString(chooser.getSelectedFile().toPath(), StandardCharsets.UTF_8);
             ServerDeploySettingsState imported = settingsService.sanitize(settingsJsonService.fromJson(json));
-            setData(imported.getDefaultShellCommand(), imported.getServers(), imported.getMappings());
+            setData(
+                    imported.getDefaultShellCommand(),
+                    imported.getShellCommandCandidates(),
+                    imported.getServers(),
+                    imported.getMappings()
+            );
             Messages.showInfoMessage(rootPanel, "配置已导入，请点击“应用”或“确定”保存。", "服务器部署");
         } catch (Exception exception) {
             Messages.showErrorDialog(rootPanel, exception.getMessage(), "导入失败");
@@ -444,10 +499,16 @@ public class ServerDeploySettingsPanel {
     }
 
     private List<ServerConfig> copyServers(List<ServerConfig> values) {
+        if (values == null) {
+            return new ArrayList<>();
+        }
         return values.stream().map(ServerConfig::copy).collect(Collectors.toList());
     }
 
     private List<DirectoryMapping> copyMappings(List<DirectoryMapping> values) {
+        if (values == null) {
+            return new ArrayList<>();
+        }
         return values.stream().map(DirectoryMapping::copy).collect(Collectors.toList());
     }
 

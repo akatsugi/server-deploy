@@ -24,6 +24,13 @@ import java.util.stream.Collectors;
 public final class ServerDeploySettingsService implements PersistentStateComponent<ServerDeploySettingsState> {
 
     public static final String DEFAULT_SHELL_COMMAND = "ls -l ${remotePath}";
+    public static final List<String> DEFAULT_SHELL_COMMAND_CANDIDATES = List.of(
+            "ls -l ${remotePath}",
+            "ls -lh ${remotePath}",
+            "tail -n 200 -f ${remotePath}",
+            "tail -n 200 -f ${remoteDirectory}/*.log",
+            "pwd"
+    );
 
     private ServerDeploySettingsState state = new ServerDeploySettingsState();
 
@@ -59,13 +66,27 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
         return normalizeShellCommand(state.getDefaultShellCommand());
     }
 
+    public List<String> getShellCommandCandidates() {
+        return copyShellCommandCandidates(state.getShellCommandCandidates());
+    }
+
     public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings) {
-        update(servers, mappings, state.getDefaultShellCommand());
+        update(servers, mappings, state.getDefaultShellCommand(), state.getShellCommandCandidates());
     }
 
     public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings, String defaultShellCommand) {
+        update(servers, mappings, defaultShellCommand, state.getShellCommandCandidates());
+    }
+
+    public void update(
+            List<ServerConfig> servers,
+            List<DirectoryMapping> mappings,
+            String defaultShellCommand,
+            List<String> shellCommandCandidates
+    ) {
         ServerDeploySettingsState newState = new ServerDeploySettingsState();
         newState.setDefaultShellCommand(defaultShellCommand);
+        newState.setShellCommandCandidates(shellCommandCandidates);
         newState.setServers(copyServers(servers));
         newState.setMappings(copyMappings(mappings));
         state = sanitize(newState);
@@ -102,6 +123,10 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
 
         ServerDeploySettingsState normalized = new ServerDeploySettingsState();
         normalized.setDefaultShellCommand(normalizeShellCommand(source.getDefaultShellCommand()));
+        normalized.setShellCommandCandidates(normalizeShellCommandCandidates(
+                source.getShellCommandCandidates(),
+                source.getShellCommandCandidates() == null
+        ));
         normalized.setServers(normalizedServers);
         normalized.setMappings(normalizedMappings);
         return normalized;
@@ -125,6 +150,13 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
             return new ArrayList<>();
         }
         return mappings.stream().map(DirectoryMapping::copy).collect(Collectors.toList());
+    }
+
+    private List<String> copyShellCommandCandidates(List<String> shellCommandCandidates) {
+        if (shellCommandCandidates == null) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(shellCommandCandidates);
     }
 
     private String safe(String value) {
@@ -199,5 +231,21 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
     public static String normalizeShellCommand(String value) {
         String normalized = value == null ? "" : value.strip();
         return normalized.isEmpty() ? DEFAULT_SHELL_COMMAND : normalized;
+    }
+
+    public static List<String> normalizeShellCommandCandidates(List<String> values, boolean useDefaultsWhenEmpty) {
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        if (values != null) {
+            for (String value : values) {
+                String candidate = value == null ? "" : value.strip();
+                if (!candidate.isEmpty()) {
+                    normalized.add(candidate);
+                }
+            }
+        }
+        if (normalized.isEmpty() && useDefaultsWhenEmpty) {
+            normalized.addAll(DEFAULT_SHELL_COMMAND_CANDIDATES);
+        }
+        return new ArrayList<>(normalized);
     }
 }

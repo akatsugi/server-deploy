@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 public class ServerDeploySettingsState {
 
     private String defaultShellCommand = "ls -l ${remotePath}";
+    private List<String> shellCommandCandidates = new ArrayList<>();
     private List<ServerConfig> servers = new ArrayList<>();
     private List<DirectoryMapping> mappings = new ArrayList<>();
 
@@ -19,6 +20,14 @@ public class ServerDeploySettingsState {
 
     public void setDefaultShellCommand(String defaultShellCommand) {
         this.defaultShellCommand = defaultShellCommand;
+    }
+
+    public List<String> getShellCommandCandidates() {
+        return shellCommandCandidates;
+    }
+
+    public void setShellCommandCandidates(List<String> shellCommandCandidates) {
+        this.shellCommandCandidates = shellCommandCandidates == null ? new ArrayList<>() : new ArrayList<>(shellCommandCandidates);
     }
 
     public List<ServerConfig> getServers() {
@@ -40,6 +49,7 @@ public class ServerDeploySettingsState {
     public ServerDeploySettingsState copy() {
         ServerDeploySettingsState copy = new ServerDeploySettingsState();
         copy.setDefaultShellCommand(defaultShellCommand);
+        copy.setShellCommandCandidates(shellCommandCandidates);
         copy.setServers(servers.stream().map(ServerConfig::copy).collect(Collectors.toList()));
         copy.setMappings(mappings.stream().map(DirectoryMapping::copy).collect(Collectors.toList()));
         return copy;
