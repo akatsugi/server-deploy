@@ -25,7 +25,6 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.util.PsiUtilCore;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -76,17 +75,13 @@ public class ExecuteRemoteShellAction extends AnAction implements DumbAware {
 
     private void runCommand(Project project, ResolvedUploadTarget target, String command) {
         RemoteCommandConsoleDialog consoleDialog = new RemoteCommandConsoleDialog(project, target, command);
-        try {
-            RemoteCommandService.RunningCommand runningCommand = remoteCommandService.start(
-                    target.getServerConfig(),
-                    command,
-                    consoleDialog.createOutputListener()
-            );
-            consoleDialog.attachRunningCommand(runningCommand);
-            consoleDialog.show();
-        } catch (IOException | RuntimeException | com.jcraft.jsch.JSchException exception) {
-            showNotification(project, NotificationType.ERROR, "远程命令执行失败", exception.getMessage());
-        }
+        consoleDialog.setCommandStarter(listener -> remoteCommandService.start(
+                target.getServerConfig(),
+                command,
+                listener
+        ));
+        consoleDialog.startInitialExecution();
+        consoleDialog.show();
     }
 
     private void showNotification(Project project, NotificationType type, String title, String content) {

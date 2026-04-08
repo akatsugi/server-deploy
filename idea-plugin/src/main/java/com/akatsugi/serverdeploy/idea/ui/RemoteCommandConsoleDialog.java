@@ -44,6 +44,7 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
     private final JBLabel statusLabel = new JBLabel("状态：运行中");
     private final JTextArea commandArea = new JTextArea();
     private final JTextPane outputPane = new JTextPane();
+    private final RerunAction rerunAction = new RerunAction();
     private final StopAction stopAction = new StopAction();
     private final SimpleAttributeSet normalStyle = createStyle(new Color(210, 210, 210), false);
     private final SimpleAttributeSet infoStyle = createStyle(new Color(120, 190, 255), false);
@@ -51,12 +52,14 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
     private final SimpleAttributeSet errorStyle = createStyle(new Color(255, 120, 120), true);
     private final StringBuilder pendingStdout = new StringBuilder();
     private final StringBuilder pendingStderr = new StringBuilder();
+    private CommandStarter commandStarter;
     private RemoteCommandService.RunningCommand runningCommand;
     private boolean commandFinished;
 
     public RemoteCommandConsoleDialog(@Nullable Project project, ResolvedUploadTarget target, String renderedCommand) {
         super(project);
         this.project = project;
+        setModal(false);
         setTitle("远程命令输出");
 
         commandArea.setEditable(false);
@@ -78,6 +81,14 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
         setResizable(true);
     }
 
+    public void setCommandStarter(CommandStarter commandStarter) {
+        this.commandStarter = commandStarter;
+    }
+
+    public void startInitialExecution() {
+        startExecution(false);
+    }
+
     public RemoteCommandService.OutputListener createOutputListener() {
         return new RemoteCommandService.OutputListener() {
             @Override
@@ -95,6 +106,7 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
                 SwingUtilities.invokeLater(() -> {
                     flushPendingOutput();
                     commandFinished = true;
+                    rerunAction.setEnabled(true);
                     stopAction.setEnabled(false);
                     if (result.isStoppedByUser()) {
                         statusLabel.setText("状态：已停止");
@@ -112,15 +124,12 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
                     flushPendingOutput();
                     appendRenderedText("[ERROR] " + safe(error.getMessage()) + System.lineSeparator(), errorStyle);
                     commandFinished = true;
+                    rerunAction.setEnabled(true);
                     stopAction.setEnabled(false);
                     statusLabel.setText("状态：执行失败 - " + safe(error.getMessage()));
                 });
             }
         };
-    }
-
-    public void attachRunningCommand(RemoteCommandService.RunningCommand runningCommand) {
-        this.runningCommand = runningCommand;
     }
 
     @Override
@@ -130,7 +139,7 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
 
     @Override
     protected Action[] createActions() {
-        return new Action[]{stopAction, getOKAction()};
+        return new Action[]{rerunAction, stopAction, getOKAction()};
     }
 
     @Override
@@ -211,7 +220,7 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
         saveItem.addActionListener(event -> saveOutput());
 
         JMenuItem clearItem = new JMenuItem("清空当前结果记录");
-        clearItem.addActionListener(event -> outputPane.setText(""));
+        clearItem.addActionListener(event -> clearOutput());
 
         popupMenu.add(copyItem);
         popupMenu.add(saveItem);
@@ -301,6 +310,38 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
         return attributes;
     }
 
+    private void clearOutput() {
+        pendingStdout.setLength(0);
+        pendingStderr.setLength(0);
+        outputPane.setText("");
+    }
+
+    private void startExecution(boolean clearOutput) {
+        if (commandStarter == null) {
+            Messages.showErrorDialog(panel, "当前窗口未配置命令重跑入口。", "远程命令输出");
+            return;
+        }
+        if (runningCommand != null && runningCommand.isRunning()) {
+            return;
+        }
+        if (clearOutput) {
+            clearOutput();
+        }
+        commandFinished = false;
+        statusLabel.setText("状态：运行中");
+        rerunAction.setEnabled(false);
+        stopAction.setEnabled(true);
+        try {
+            runningCommand = commandStarter.start(createOutputListener());
+        } catch (Exception exception) {
+            commandFinished = true;
+            rerunAction.setEnabled(true);
+            stopAction.setEnabled(false);
+            statusLabel.setText("状态：执行失败 - " + safe(exception.getMessage()));
+            appendRenderedText("[ERROR] " + safe(exception.getMessage()) + System.lineSeparator(), errorStyle);
+        }
+    }
+
     private void stopIfRunning() {
         if (!commandFinished && runningCommand != null && runningCommand.isRunning()) {
             runningCommand.stop();
@@ -311,9 +352,25 @@ public class RemoteCommandConsoleDialog extends DialogWrapper {
         return value == null || value.isBlank() ? "未知错误" : value;
     }
 
+    public interface CommandStarter {
+        RemoteCommandService.RunningCommand start(RemoteCommandService.OutputListener listener) throws Exception;
+    }
+
     private enum OutputKind {
         STDOUT,
         STDERR
+    }
+
+    private final class RerunAction extends DialogWrapperAction {
+        private RerunAction() {
+            super("重新执行");
+            setEnabled(false);
+        }
+
+        @Override
+        protected void doAction(ActionEvent event) {
+            startExecution(true);
+        }
     }
 
     private final class StopAction extends DialogWrapperAction {
