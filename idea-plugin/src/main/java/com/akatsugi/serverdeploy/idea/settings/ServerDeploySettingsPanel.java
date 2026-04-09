@@ -3,6 +3,7 @@ package com.akatsugi.serverdeploy.idea.settings;
 import com.akatsugi.serverdeploy.idea.model.DirectoryMapping;
 import com.akatsugi.serverdeploy.idea.model.ServerConfig;
 import com.akatsugi.serverdeploy.idea.service.SettingsJsonService;
+import com.akatsugi.serverdeploy.idea.ui.LoadServerMappingsDialog;
 import com.akatsugi.serverdeploy.idea.ui.MappingEditDialog;
 import com.akatsugi.serverdeploy.idea.ui.ServerEditDialog;
 import com.intellij.openapi.options.ConfigurationException;
@@ -246,12 +247,15 @@ public class ServerDeploySettingsPanel {
         JButton addButton = new JButton("新增");
         JButton editButton = new JButton("编辑");
         JButton removeButton = new JButton("删除");
+        JButton loadMappingsButton = new JButton("加载映射");
         addButton.addActionListener(event -> addServer());
         editButton.addActionListener(event -> editServer());
         removeButton.addActionListener(event -> removeServer());
+        loadMappingsButton.addActionListener(event -> loadMappingsFromAnotherServer());
         panel.add(addButton);
         panel.add(editButton);
         panel.add(removeButton);
+        panel.add(loadMappingsButton);
         return panel;
     }
 
@@ -260,12 +264,15 @@ public class ServerDeploySettingsPanel {
         JButton addButton = new JButton("新增");
         JButton editButton = new JButton("编辑");
         JButton removeButton = new JButton("删除");
+        JButton loadMappingsButton = new JButton("从其他服务器加载");
         addButton.addActionListener(event -> addMapping());
         editButton.addActionListener(event -> editMapping());
         removeButton.addActionListener(event -> removeMapping());
+        loadMappingsButton.addActionListener(event -> loadMappingsFromAnotherServer());
         panel.add(addButton);
         panel.add(editButton);
         panel.add(removeButton);
+        panel.add(loadMappingsButton);
         return panel;
     }
 
@@ -389,6 +396,99 @@ public class ServerDeploySettingsPanel {
         mappingTableModel.fireTableDataChanged();
     }
 
+    private void loadMappingsFromAnotherServer() {
+        if (servers.size() < 2) {
+            Messages.showInfoMessage(rootPanel, "至少需要两个服务器，才能加载其他服务器的映射。", "服务器部署");
+            return;
+        }
+
+        ServerConfig initialTarget = resolvePreferredTargetServer();
+        ServerConfig initialSource = resolveInitialSourceServer(initialTarget);
+        LoadServerMappingsDialog dialog = new LoadServerMappingsDialog(servers, initialTarget, initialSource);
+        if (!dialog.showAndGet()) {
+            return;
+        }
+
+        ServerConfig targetServer = dialog.getTargetServer();
+        ServerConfig sourceServer = dialog.getSourceServer();
+        if (targetServer == null || sourceServer == null) {
+            return;
+        }
+
+        List<DirectoryMapping> sourceMappings = mappings.stream()
+                .filter(mapping -> Objects.equals(mapping.getServerId(), sourceServer.getId()))
+                .map(DirectoryMapping::copy)
+                .collect(Collectors.toList());
+        if (sourceMappings.isEmpty()) {
+            Messages.showInfoMessage(rootPanel, "来源服务器没有可加载的目录映射。", "服务器部署");
+            return;
+        }
+
+        int importedCount = 0;
+        int skippedCount = 0;
+        for (DirectoryMapping sourceMapping : sourceMappings) {
+            DirectoryMapping copiedMapping = sourceMapping.copy();
+            copiedMapping.setId(null);
+            copiedMapping.setServerId(targetServer.getId());
+
+            if (!dialog.isOverwriteEnabled() && hasSameLocalDirectoryMapping(targetServer.getId(), copiedMapping.getLocalDirectory())) {
+                skippedCount++;
+                continue;
+            }
+
+            upsertMapping(copiedMapping, null);
+            importedCount++;
+        }
+
+        mappingTableModel.fireTableDataChanged();
+        String message = "已从服务器“" + safe(sourceServer.getName()) + "”加载到“" + safe(targetServer.getName()) + "”。\n"
+                + "导入/覆盖映射：" + importedCount;
+        if (skippedCount > 0) {
+            message += "\n跳过重复映射：" + skippedCount;
+        }
+        Messages.showInfoMessage(rootPanel, message, "服务器部署");
+    }
+
+    private boolean hasSameLocalDirectoryMapping(String serverId, String localDirectory) {
+        String normalizedLocalDirectory = ServerDeploySettingsService.normalizeLocalDirectory(localDirectory);
+        return mappings.stream().anyMatch(mapping ->
+                Objects.equals(mapping.getServerId(), serverId)
+                        && Objects.equals(
+                        ServerDeploySettingsService.normalizeLocalDirectory(mapping.getLocalDirectory()),
+                        normalizedLocalDirectory
+                )
+        );
+    }
+
+    private ServerConfig resolvePreferredTargetServer() {
+        int selectedServerRow = serverTable.getSelectedRow();
+        if (selectedServerRow >= 0) {
+            return servers.get(serverTable.convertRowIndexToModel(selectedServerRow));
+        }
+
+        int selectedMappingRow = mappingTable.getSelectedRow();
+        if (selectedMappingRow >= 0) {
+            DirectoryMapping mapping = mappings.get(mappingTable.convertRowIndexToModel(selectedMappingRow));
+            return findServerById(mapping.getServerId());
+        }
+
+        return servers.stream().filter(ServerConfig::isLastUsed).findFirst().orElse(servers.get(0));
+    }
+
+    private ServerConfig resolveInitialSourceServer(ServerConfig targetServer) {
+        return servers.stream()
+                .filter(server -> !Objects.equals(server.getId(), targetServer == null ? null : targetServer.getId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private ServerConfig findServerById(String serverId) {
+        return servers.stream()
+                .filter(server -> Objects.equals(server.getId(), serverId))
+                .findFirst()
+                .orElse(null);
+    }
+
     private void upsertMapping(DirectoryMapping mapping, String existingId) {
         mapping.ensureIdentity();
         if (existingId != null) {
@@ -398,7 +498,10 @@ public class ServerDeploySettingsPanel {
         for (int i = 0; i < mappings.size(); i++) {
             DirectoryMapping current = mappings.get(i);
             boolean sameTarget = Objects.equals(current.getServerId(), mapping.getServerId())
-                    && Objects.equals(ServerDeploySettingsService.normalizeLocalDirectory(current.getLocalDirectory()), mapping.getLocalDirectory());
+                    && Objects.equals(
+                    ServerDeploySettingsService.normalizeLocalDirectory(current.getLocalDirectory()),
+                    mapping.getLocalDirectory()
+            );
             boolean sameId = Objects.equals(current.getId(), mapping.getId());
             if (sameTarget || sameId) {
                 mapping.setId(current.getId());
