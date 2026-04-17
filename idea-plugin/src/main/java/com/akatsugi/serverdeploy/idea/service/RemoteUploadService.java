@@ -36,12 +36,13 @@ public class RemoteUploadService {
             Path localPath,
             String remoteTargetPath,
             String mappingDirectory,
+            String fileNameOverride,
             boolean deleteExisting,
             ProgressListener progressListener
     ) throws IOException, JSchException, SftpException {
         uploadToExactPaths(
                 serverConfig,
-                List.of(new UploadRequest(localPath, remoteTargetPath, mappingDirectory)),
+                List.of(new UploadRequest(localPath, remoteTargetPath, mappingDirectory, fileNameOverride)),
                 deleteExisting,
                 progressListener
         );
@@ -56,7 +57,12 @@ public class RemoteUploadService {
         List<UploadPlan> plans = new ArrayList<>();
         int totalFiles = 0;
         for (UploadRequest request : requests) {
-            UploadPlan plan = buildUploadPlan(request.localPath(), request.remoteTargetPath(), request.mappingDirectory());
+            UploadPlan plan = buildUploadPlan(
+                    request.localPath(),
+                    request.remoteTargetPath(),
+                    request.mappingDirectory(),
+                    request.fileNameOverride()
+            );
             plans.add(plan);
             totalFiles += plan.files.size();
         }
@@ -160,7 +166,12 @@ public class RemoteUploadService {
         }
     }
 
-    private UploadPlan buildUploadPlan(Path localPath, String remoteTargetPath, String mappingDirectory) throws IOException {
+    private UploadPlan buildUploadPlan(
+            Path localPath,
+            String remoteTargetPath,
+            String mappingDirectory,
+            String fileNameOverride
+    ) throws IOException {
         Path normalizedLocalPath = localPath.toAbsolutePath().normalize();
         if (!Files.exists(normalizedLocalPath)) {
             throw new IOException("本地路径不存在：" + normalizedLocalPath);
@@ -170,7 +181,19 @@ public class RemoteUploadService {
         String normalizedMappingDirectory = ServerDeploySettingsService.normalizeRemoteDirectory(mappingDirectory);
         UploadPlan plan = new UploadPlan(normalizedRemoteTarget, normalizedMappingDirectory, Files.isDirectory(normalizedLocalPath));
         if (!plan.directory) {
-            plan.files.add(new UploadEntry(normalizedLocalPath, normalizedRemoteTarget, normalizedMappingDirectory, Files.size(normalizedLocalPath)));
+            String effectiveRemoteTarget = normalizedRemoteTarget;
+            String normalizedOverride = ServerDeploySettingsService.normalizeUploadFileName(fileNameOverride);
+            if (!normalizedOverride.isBlank()) {
+                int lastSlash = normalizedRemoteTarget.lastIndexOf('/');
+                String remoteDirectory = lastSlash <= 0 ? "/" : normalizedRemoteTarget.substring(0, lastSlash);
+                effectiveRemoteTarget = ServerDeploySettingsService.joinRemotePath(remoteDirectory, normalizedOverride);
+            }
+            plan.files.add(new UploadEntry(
+                    normalizedLocalPath,
+                    effectiveRemoteTarget,
+                    normalizedMappingDirectory,
+                    Files.size(normalizedLocalPath)
+            ));
             return plan;
         }
 
@@ -267,7 +290,7 @@ public class RemoteUploadService {
         return relativePath.toString().replace('\\', '/');
     }
 
-    public record UploadRequest(Path localPath, String remoteTargetPath, String mappingDirectory) {
+    public record UploadRequest(Path localPath, String remoteTargetPath, String mappingDirectory, String fileNameOverride) {
     }
 
     private static class UploadPlan {

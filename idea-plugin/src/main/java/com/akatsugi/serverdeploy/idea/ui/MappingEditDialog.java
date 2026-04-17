@@ -36,6 +36,14 @@ public class MappingEditDialog extends DialogWrapper {
             @Nullable DirectoryMapping source,
             @Nullable String initialLocalDirectory,
             @Nullable String defaultBrowseDirectory) {
+        this(servers, source, initialLocalDirectory, defaultBrowseDirectory, null);
+    }
+
+    public MappingEditDialog(List<ServerConfig> servers,
+            @Nullable DirectoryMapping source,
+            @Nullable String initialLocalDirectory,
+            @Nullable String defaultBrowseDirectory,
+            @Nullable String preferredServerId) {
         super(true);
         serverComboBox = new JComboBox<>(servers.toArray(new ServerConfig[0]));
         this.defaultBrowseDirectory = defaultBrowseDirectory;
@@ -53,9 +61,11 @@ public class MappingEditDialog extends DialogWrapper {
             remoteDirectoryField.setText(source.getRemoteDirectory());
             lastSuggestedRemoteDirectory = source.getRemoteDirectory();
         } else {
-            ServerConfig lastUsed = servers.stream().filter(ServerConfig::isLastUsed).findFirst().orElse(servers.isEmpty() ? null : servers.get(0));
-            if (lastUsed != null) {
-                serverComboBox.setSelectedItem(lastUsed);
+            if (!selectServerById(preferredServerId)) {
+                ServerConfig lastUsed = servers.stream().filter(ServerConfig::isLastUsed).findFirst().orElse(servers.isEmpty() ? null : servers.get(0));
+                if (lastUsed != null) {
+                    serverComboBox.setSelectedItem(lastUsed);
+                }
             }
             if (initialLocalDirectory != null && !initialLocalDirectory.isBlank()) {
                 localDirectoryField.setText(initialLocalDirectory);
@@ -82,7 +92,7 @@ public class MappingEditDialog extends DialogWrapper {
             return new ValidationInfo("请选择目标服务器。", serverComboBox);
         }
         if (isBlank(localDirectoryField.getText()) || isBlank(remoteDirectoryField.getText())) {
-            return new ValidationInfo("映射配置项不能为空。");
+            return new ValidationInfo("映射配置项不能为空。", localDirectoryField);
         }
         File localDirectory = new File(localDirectoryField.getText().trim());
         if (!localDirectory.exists() || !localDirectory.isDirectory()) {
@@ -184,6 +194,20 @@ public class MappingEditDialog extends DialogWrapper {
             lastSuggestedRemoteDirectory = ".";
             remoteDirectoryField.setText(lastSuggestedRemoteDirectory);
         }
+    }
+
+    private boolean selectServerById(@Nullable String serverId) {
+        if (serverId == null || serverId.isBlank()) {
+            return false;
+        }
+        for (int i = 0; i < serverComboBox.getItemCount(); i++) {
+            ServerConfig server = serverComboBox.getItemAt(i);
+            if (Objects.equals(serverId, server.getId())) {
+                serverComboBox.setSelectedIndex(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isBlank(String value) {

@@ -66,26 +66,38 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
         return normalizeShellCommand(state.getDefaultShellCommand());
     }
 
+    public String getDefaultUploadFileName() {
+        return normalizeUploadFileName(state.getDefaultUploadFileName());
+    }
+
     public List<String> getShellCommandCandidates() {
         return copyShellCommandCandidates(state.getShellCommandCandidates());
     }
 
     public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings) {
-        update(servers, mappings, state.getDefaultShellCommand(), state.getShellCommandCandidates());
+        update(
+                servers,
+                mappings,
+                state.getDefaultShellCommand(),
+                state.getDefaultUploadFileName(),
+                state.getShellCommandCandidates()
+        );
     }
 
     public void update(List<ServerConfig> servers, List<DirectoryMapping> mappings, String defaultShellCommand) {
-        update(servers, mappings, defaultShellCommand, state.getShellCommandCandidates());
+        update(servers, mappings, defaultShellCommand, state.getDefaultUploadFileName(), state.getShellCommandCandidates());
     }
 
     public void update(
             List<ServerConfig> servers,
             List<DirectoryMapping> mappings,
             String defaultShellCommand,
+            String defaultUploadFileName,
             List<String> shellCommandCandidates
     ) {
         ServerDeploySettingsState newState = new ServerDeploySettingsState();
         newState.setDefaultShellCommand(defaultShellCommand);
+        newState.setDefaultUploadFileName(defaultUploadFileName);
         newState.setShellCommandCandidates(shellCommandCandidates);
         newState.setServers(copyServers(servers));
         newState.setMappings(copyMappings(mappings));
@@ -123,6 +135,7 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
 
         ServerDeploySettingsState normalized = new ServerDeploySettingsState();
         normalized.setDefaultShellCommand(normalizeShellCommand(source.getDefaultShellCommand()));
+        normalized.setDefaultUploadFileName(normalizeUploadFileName(source.getDefaultUploadFileName()));
         normalized.setShellCommandCandidates(normalizeShellCommandCandidates(
                 source.getShellCommandCandidates(),
                 source.getShellCommandCandidates() == null
@@ -247,5 +260,12 @@ public final class ServerDeploySettingsService implements PersistentStateCompone
             normalized.addAll(DEFAULT_SHELL_COMMAND_CANDIDATES);
         }
         return new ArrayList<>(normalized);
+    }
+
+    public static String normalizeUploadFileName(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.strip().replace('\\', '/');
     }
 }

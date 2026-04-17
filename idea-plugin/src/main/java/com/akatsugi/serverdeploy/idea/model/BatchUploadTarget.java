@@ -1,5 +1,6 @@
 package com.akatsugi.serverdeploy.idea.model;
 
+import java.nio.file.Files;
 import java.util.List;
 
 public class BatchUploadTarget {
@@ -22,6 +23,10 @@ public class BatchUploadTarget {
 
     public ResolvedUploadTarget getPrimaryTarget() {
         return uploadItems.isEmpty() ? null : uploadItems.get(0).target();
+    }
+
+    public boolean supportsSingleFileRename() {
+        return uploadItems.size() == 1 && Files.isRegularFile(uploadItems.get(0).localPath());
     }
 
     @Override

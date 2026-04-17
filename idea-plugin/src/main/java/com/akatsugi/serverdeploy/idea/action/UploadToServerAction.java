@@ -60,7 +60,12 @@ public class UploadToServerAction extends AnAction implements DumbAware {
             return;
         }
 
-        UploadTargetDialog dialog = new UploadTargetDialog(context.project, context.selectedPaths.size(), context.targets);
+        UploadTargetDialog dialog = new UploadTargetDialog(
+                context.project,
+                context.selectedPaths.size(),
+                context.targets,
+                settingsService.getDefaultUploadFileName()
+        );
         if (!dialog.showAndGet()) {
             return;
         }
@@ -71,10 +76,22 @@ public class UploadToServerAction extends AnAction implements DumbAware {
         }
 
         settingsService.markServerLastUsed(target.getServerConfig().getId());
-        runUpload(context.project, target, dialog.isDeleteExisting());
+        runUpload(
+                context.project,
+                target,
+                dialog.isDeleteExisting(),
+                dialog.isRenameFileEnabled(),
+                dialog.getRenameFileName()
+        );
     }
 
-    private void runUpload(Project project, BatchUploadTarget target, boolean deleteExisting) {
+    private void runUpload(
+            Project project,
+            BatchUploadTarget target,
+            boolean deleteExisting,
+            boolean renameFile,
+            String renameFileName
+    ) {
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "上传到服务器", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
@@ -84,7 +101,8 @@ public class UploadToServerAction extends AnAction implements DumbAware {
                             .map(item -> new RemoteUploadService.UploadRequest(
                                     item.localPath(),
                                     item.target().getRemoteTargetPath(),
-                                    item.target().getRemoteMappingDirectory()
+                                    item.target().getRemoteMappingDirectory(),
+                                    renameFile ? renameFileName : ""
                             ))
                             .toList();
 
